@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Silence Remover</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  h1 { font-size: 24px; margin-bottom: 24px; color: #fff; }
+  .card {
+    background: #16213e;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #7f8c9b;
+    margin-bottom: 14px;
+  }
+  .drop-zone {
+    border: 2px dashed #0f3460;
+    border-radius: 8px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: #4ecca3;
+    background: rgba(79, 204, 163, 0.05);
+  }
+  .drop-zone p { color: #7f8c9b; font-size: 15px; }
+  .drop-zone input { display: none; }
+  .file-info {
+    margin-top: 12px;
+    font-size: 14px;
+    color: #4ecca3;
+    display: none;
+  }
+  .slider-group { margin-bottom: 14px; }
+  .slider-group:last-child { margin-bottom: 0; }
+  .slider-group label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+  .slider-group label span { color: #4ecca3; font-weight: 600; }
+  input[type="range"] {
+    width: 100%;
+    -webkit-appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: #0f3460;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #4ecca3;
+    cursor: pointer;
+  }
+  .btn {
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: #0f3460; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #1a4a8a; }
+  .btn-action { background: #4ecca3; color: #1a1a2e; }
+  .btn-action:hover:not(:disabled) { background: #3db890; }
+  .actions { display: flex; gap: 10px; margin-top: 14px; }
+  .summary {
+    margin-top: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .summary strong { color: #4ecca3; }
+  .segment-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 13px;
+  }
+  .segment-table th {
+    text-align: left;
+    padding: 8px;
+    border-bottom: 1px solid #0f3460;
+    color: #7f8c9b;
+    font-weight: 600;
+  }
+  .segment-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(15,52,96,0.4);
+  }
+  .segment-table .silent td { color: #e94560; opacity: 0.7; }
+  .segment-table .keep td { color: #4ecca3; }
+  .table-scroll {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 8px;
+  }
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #0f3460;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 12px;
+  }
+  .progress-bar .fill {
+    height: 100%;
+    background: #4ecca3;
+    width: 0%;
+    transition: width 0.3s;
+  }
+  .status {
+    font-size: 13px;
+    color: #7f8c9b;
+    margin-top: 8px;
+  }
+  .error { color: #e94560; font-size: 14px; margin-top: 8px; }
+  .warning { color: #f0a500; font-size: 13px; margin-top: 8px; }
+  .hidden { display: none !important; }
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<h1>Silence Remover</h1>
+
+<!-- 1. File Selection -->
+<div class="card">
+  <h2>1. Select Video</h2>
+  <div class="drop-zone" id="drop-zone">
+    <p>Drop an MP4 here or click to browse</p>
+    <input type="file" id="file-input" accept="video/mp4,video/*">
+  </div>
+  <div class="file-info" id="file-info"></div>
+  <div class="error hidden" id="upload-error"></div>
+</div>
+
+<!-- 2. Configuration -->
+<div class="card" id="config-section">
+  <h2>2. Configure Detection</h2>
+  <div class="slider-group">
+    <label>Silence Threshold <span id="threshold-val">-35 dB</span></label>
+    <input type="range" id="threshold" min="-60" max="-20" value="-35" step="1">
+  </div>
+  <div class="slider-group">
+    <label>Min Silence Duration <span id="duration-val">0.5s</span></label>
+    <input type="range" id="min-duration" min="0.3" max="5" value="0.5" step="0.1">
+  </div>
+  <div class="slider-group">
+    <label>Padding (keep around speech) <span id="padding-val">100ms</span></label>
+    <input type="range" id="padding" min="0" max="500" value="100" step="10">
+  </div>
+  <div class="actions">
+    <button class="btn btn-primary" id="detect-btn" disabled>Detect Silences</button>
+  </div>
+  <div class="error hidden" id="detect-error"></div>
+</div>
+
+<!-- 3. Results -->
+<div class="card hidden" id="results-section">
+  <h2>3. Review</h2>
+  <div class="summary" id="summary"></div>
+  <div class="table-scroll">
+    <table class="segment-table">
+      <thead><tr><th>#</th><th>Start</th><th>End</th><th>Duration</th><th>Type</th></tr></thead>
+      <tbody id="segment-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 4. Process -->
+<div class="card hidden" id="process-section">
+  <h2>4. Process</h2>
+  <div class="actions">
+    <button class="btn btn-action" id="process-btn">Remove Silences & Download</button>
+  </div>
+  <div class="status hidden" id="status"></div>
+  <div class="error hidden" id="process-error"></div>
+</div>
+
+<script>
+// ---- State ----
+let selectedFile = null;
+let totalDuration = 0;
+let nonSilentSegments = [];
+let fileUploaded = false;
+
+// ---- DOM refs ----
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const fileInfo = document.getElementById('file-info');
+const uploadError = document.getElementById('upload-error');
+const thresholdSlider = document.getElementById('threshold');
+const durationSlider = document.getElementById('min-duration');
+const paddingSlider = document.getElementById('padding');
+const thresholdVal = document.getElementById('threshold-val');
+const durationVal = document.getElementById('duration-val');
+const paddingVal = document.getElementById('padding-val');
+const detectBtn = document.getElementById('detect-btn');
+const detectError = document.getElementById('detect-error');
+const resultsSection = document.getElementById('results-section');
+const summaryEl = document.getElementById('summary');
+const segmentTbody = document.getElementById('segment-tbody');
+const processSection = document.getElementById('process-section');
+const processBtn = document.getElementById('process-btn');
+const statusEl = document.getElementById('status');
+const processError = document.getElementById('process-error');
+
+// ---- File Selection ----
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+async function handleFile(file) {
+  selectedFile = file;
+  fileUploaded = false;
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+
+  fileInfo.style.display = 'block';
+  fileInfo.innerHTML = `<span class="spinner"></span> Uploading ${file.name} (${sizeMB} MB)...`;
+  detectBtn.disabled = true;
+  uploadError.classList.add('hidden');
+  resultsSection.classList.add('hidden');
+  processSection.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/upload', {
+      method: 'POST',
+      body: file
+    });
+    const data = await resp.json();
+
+    if (!data.ok) throw new Error(data.error);
+
+    totalDuration = data.duration;
+    fileUploaded = true;
+    fileInfo.innerHTML = `${file.name} — ${sizeMB} MB — ${formatTime(totalDuration)}`;
+    detectBtn.disabled = false;
+  } catch (err) {
+    fileInfo.innerHTML = `${file.name} — ${sizeMB} MB`;
+    uploadError.textContent = `Upload failed: ${err.message}`;
+    uploadError.classList.remove('hidden');
+  }
+}
+
+// ---- Sliders ----
+thresholdSlider.addEventListener('input', () => thresholdVal.textContent = `${thresholdSlider.value} dB`);
+durationSlider.addEventListener('input', () => durationVal.textContent = `${parseFloat(durationSlider.value).toFixed(1)}s`);
+paddingSlider.addEventListener('input', () => paddingVal.textContent = `${paddingSlider.value}ms`);
+
+// ---- Silence Detection ----
+detectBtn.addEventListener('click', runDetection);
+
+async function runDetection() {
+  if (!fileUploaded) return;
+
+  detectBtn.innerHTML = '<span class="spinner"></span> Detecting...';
+  detectBtn.disabled = true;
+  detectError.classList.add('hidden');
+  resultsSection.classList.add('hidden');
+  processSection.classList.add('hidden');
+
+  const threshold = parseFloat(thresholdSlider.value);
+  const minDuration = parseFloat(durationSlider.value);
+  const padding = parseInt(paddingSlider.value) / 1000;
+
+  try {
+    const resp = await fetch('/api/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threshold, minDuration })
+    });
+    const data = await resp.json();
+
+    if (!data.ok) throw new Error(data.error);
+
+    totalDuration = data.totalDuration;
+    const silences = data.silences;
+
+    // Build non-silent segments with padding
+    nonSilentSegments = [];
+    const allSegments = [];
+    let cursor = 0;
+
+    for (const s of silences) {
+      const keepEnd = Math.min(s.start + padding, totalDuration);
+      const keepStart = Math.max(s.end - padding, 0);
+
+      if (cursor < keepEnd) {
+        nonSilentSegments.push({ start: cursor, end: keepEnd });
+        allSegments.push({ start: cursor, end: keepEnd, type: 'keep' });
+      }
+      allSegments.push({ start: s.start, end: s.end, type: 'silent' });
+      cursor = Math.max(keepStart, cursor);
+    }
+    if (cursor < totalDuration) {
+      nonSilentSegments.push({ start: cursor, end: totalDuration });
+      allSegments.push({ start: cursor, end: totalDuration, type: 'keep' });
+    }
+
+    // Merge adjacent segments with tiny gaps
+    const merged = [];
+    for (const seg of nonSilentSegments) {
+      if (merged.length && (seg.start - merged[merged.length - 1].end) < 0.1) {
+        merged[merged.length - 1].end = seg.end;
+      } else {
+        merged.push({ ...seg });
+      }
+    }
+    nonSilentSegments = merged;
+
+    // Render
+    const silentTime = silences.reduce((sum, s) => sum + (s.end - s.start), 0);
+    const outputDuration = nonSilentSegments.reduce((sum, s) => sum + (s.end - s.start), 0);
+    const pct = Math.round((silentTime / totalDuration) * 100);
+
+    summaryEl.innerHTML = `Found <strong>${silences.length}</strong> silent segments ` +
+      `(<strong>${formatTime(silentTime)}</strong> total). ` +
+      `Output: <strong>${formatTime(outputDuration)}</strong> (${pct}% shorter).`;
+
+    // Segment table
+    const sorted = [...allSegments].sort((a, b) => a.start - b.start);
+    segmentTbody.innerHTML = sorted.map((s, i) =>
+      `<tr class="${s.type === 'silent' ? 'silent' : 'keep'}">
+        <td>${i + 1}</td>
+        <td>${formatTime(s.start)}</td>
+        <td>${formatTime(s.end)}</td>
+        <td>${formatTime(s.end - s.start)}</td>
+        <td>${s.type === 'silent' ? 'Silent' : 'Keep'}</td>
+      </tr>`
+    ).join('');
+
+    resultsSection.classList.remove('hidden');
+
+    if (silences.length > 0) {
+      processSection.classList.remove('hidden');
+      processBtn.disabled = false;
+    } else {
+      summaryEl.innerHTML = 'No silences found at this threshold. Try raising the threshold.';
+    }
+
+  } catch (err) {
+    detectError.textContent = `Detection failed: ${err.message}`;
+    detectError.classList.remove('hidden');
+  } finally {
+    detectBtn.innerHTML = 'Detect Silences';
+    detectBtn.disabled = false;
+  }
+}
+
+// ---- Process ----
+processBtn.addEventListener('click', processVideo);
+
+async function processVideo() {
+  if (nonSilentSegments.length === 0) return;
+
+  processBtn.innerHTML = '<span class="spinner"></span> Processing...';
+  processBtn.disabled = true;
+  processError.classList.add('hidden');
+  statusEl.textContent = 'FFmpeg is cutting and re-encoding your video...';
+  statusEl.classList.remove('hidden');
+
+  try {
+    const resp = await fetch('/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ segments: nonSilentSegments })
+    });
+    const data = await resp.json();
+
+    if (!data.ok) throw new Error(data.error);
+
+    // Trigger download
+    const a = document.createElement('a');
+    a.href = data.downloadUrl;
+    const baseName = selectedFile.name.replace(/\.[^.]+$/, '');
+    a.download = `${baseName}_silence-removed.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    const sizeMB = (data.size / 1024 / 1024).toFixed(1);
+    statusEl.textContent = `Done! Downloaded (${sizeMB} MB).`;
+
+  } catch (err) {
+    processError.textContent = `Processing failed: ${err.message}`;
+    processError.classList.remove('hidden');
+    statusEl.classList.add('hidden');
+  } finally {
+    processBtn.innerHTML = 'Remove Silences & Download';
+    processBtn.disabled = false;
+  }
+}
+
+// ---- Utils ----
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.round((sec % 1) * 10);
+  return `${m}:${String(s).padStart(2, '0')}.${ms}`;
+}
+</script>
+</body>
+</html>
