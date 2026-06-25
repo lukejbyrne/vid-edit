@@ -1,0 +1,8 @@
+.env
+.DS_Store
+.claude/
+__pycache__/
+*.pyc
+
+# Remotion motion-graphics baselines (self-contained sub-project, not tracked here)
+motion-graphics-template/

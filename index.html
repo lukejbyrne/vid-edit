@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Silence Remover</title>
+<title>Vid-Edit</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -13,7 +13,8 @@
     min-height: 100vh;
     padding: 24px;
   }
-  h1 { font-size: 24px; margin-bottom: 24px; color: #fff; }
+  h1 { font-size: 24px; margin-bottom: 0; color: #fff; }
+  .header { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; }
   .card {
     background: #16213e;
     border-radius: 12px;
@@ -27,6 +28,35 @@
     color: #7f8c9b;
     margin-bottom: 14px;
   }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    background: #0d1b33;
+    border-radius: 10px;
+    padding: 4px;
+  }
+  .tab-btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: transparent;
+    color: #7f8c9b;
+    transition: all 0.2s;
+  }
+  .tab-btn.active {
+    background: #16213e;
+    color: #4ecca3;
+  }
+  .tab-btn:hover:not(.active) { color: #e0e0e0; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Shared form elements */
   .drop-zone {
     border: 2px dashed #0f3460;
     border-radius: 8px;
@@ -86,12 +116,11 @@
   .btn-primary:hover:not(:disabled) { background: #1a4a8a; }
   .btn-action { background: #4ecca3; color: #1a1a2e; }
   .btn-action:hover:not(:disabled) { background: #3db890; }
+  .btn-danger { background: #e94560; color: #fff; }
+  .btn-danger:hover:not(:disabled) { background: #d13550; }
+  .btn-sm { padding: 6px 14px; font-size: 13px; }
   .actions { display: flex; gap: 10px; margin-top: 14px; }
-  .summary {
-    margin-top: 12px;
-    font-size: 14px;
-    line-height: 1.6;
-  }
+  .summary { margin-top: 12px; font-size: 14px; line-height: 1.6; }
   .summary strong { color: #4ecca3; }
   .segment-table {
     width: 100%;
@@ -112,32 +141,9 @@
   }
   .segment-table .silent td { color: #e94560; opacity: 0.7; }
   .segment-table .keep td { color: #4ecca3; }
-  .table-scroll {
-    max-height: 200px;
-    overflow-y: auto;
-    margin-top: 8px;
-  }
-  .progress-bar {
-    width: 100%;
-    height: 8px;
-    background: #0f3460;
-    border-radius: 4px;
-    overflow: hidden;
-    margin-top: 12px;
-  }
-  .progress-bar .fill {
-    height: 100%;
-    background: #4ecca3;
-    width: 0%;
-    transition: width 0.3s;
-  }
-  .status {
-    font-size: 13px;
-    color: #7f8c9b;
-    margin-top: 8px;
-  }
+  .table-scroll { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+  .status { font-size: 13px; color: #7f8c9b; margin-top: 8px; }
   .error { color: #e94560; font-size: 14px; margin-top: 8px; }
-  .warning { color: #f0a500; font-size: 13px; margin-top: 8px; }
   .hidden { display: none !important; }
   .spinner {
     display: inline-block;
@@ -150,74 +156,753 @@
     margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-wrap {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .progress-bar {
+    flex: 1;
+    height: 10px;
+    background: rgba(15,52,96,0.5);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4ecca3, #6dd5c1);
+    transition: width 0.4s ease;
+  }
+  .progress-label {
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: #e3e8ef;
+    min-width: 44px;
+    text-align: right;
+  }
+
+  /* ---- Transcript Editor Styles ---- */
+  .editor-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .editor-layout { grid-template-columns: 1fr; }
+  }
+  .video-panel video {
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+  }
+  .video-panel .video-time {
+    font-size: 13px;
+    color: #7f8c9b;
+    margin-top: 8px;
+  }
+  .transcript-panel {
+    max-height: 400px;
+    overflow-y: auto;
+    line-height: 1.8;
+    font-size: 15px;
+    padding: 12px;
+    background: #0d1b33;
+    border-radius: 8px;
+  }
+  .transcript-panel .word {
+    display: inline;
+    cursor: pointer;
+    padding: 2px 1px;
+    border-radius: 3px;
+    transition: background 0.15s;
+  }
+  .transcript-panel .word:hover { background: rgba(79, 204, 163, 0.15); }
+  .transcript-panel .word.current {
+    background: #4ecca3;
+    color: #1a1a2e;
+    font-weight: 600;
+  }
+  .transcript-panel .word.selected {
+    background: rgba(15, 52, 96, 0.8);
+    outline: 1px solid #0f3460;
+  }
+  .transcript-panel .word.cut {
+    text-decoration: line-through;
+    opacity: 0.35;
+    color: #e94560;
+  }
+  .transcript-panel .segment-break {
+    display: block;
+    height: 8px;
+  }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .toolbar .hint {
+    font-size: 12px;
+    color: #7f8c9b;
+    margin-left: auto;
+  }
+
+  /* Timeline */
+  .timeline-container {
+    margin-top: 14px;
+    position: relative;
+  }
+  .timeline-label {
+    font-size: 12px;
+    color: #7f8c9b;
+    margin-bottom: 6px;
+  }
+  .timeline {
+    width: 100%;
+    height: 48px;
+    background: #0d1b33;
+    border-radius: 6px;
+    position: relative;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .timeline .tl-clip {
+    position: absolute;
+    top: 2px;
+    height: 28px;
+    border-radius: 3px;
+    transition: opacity 0.15s;
+    cursor: grab;
+  }
+  .timeline .tl-clip.kept { background: #4ecca3; opacity: 0.7; }
+  .timeline .tl-clip.kept:hover { opacity: 1; }
+  .timeline .tl-clip.cut-region { background: #e94560; opacity: 0.2; }
+  .timeline .tl-clip.dragging { opacity: 1; outline: 2px solid #fff; z-index: 10; }
+  .timeline .tl-playhead {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: #fff;
+    pointer-events: none;
+    z-index: 5;
+    transition: left 0.1s linear;
+  }
+  .timeline .tl-times {
+    position: absolute;
+    bottom: 2px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: #7f8c9b;
+    padding: 0 4px;
+    pointer-events: none;
+  }
+  /* Clip order bar (for reordered clips) */
+  .clip-order {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+    min-height: 36px;
+    padding: 6px;
+    background: #0d1b33;
+    border-radius: 6px;
+  }
+  .clip-order-label {
+    font-size: 12px;
+    color: #7f8c9b;
+    margin-top: 8px;
+    margin-bottom: 2px;
+  }
+  .clip-order .clip-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #4ecca3;
+    color: #1a1a2e;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    user-select: none;
+    transition: transform 0.15s, box-shadow 0.15s;
+    cursor: grab;
+  }
+  .clip-order .clip-pill:active { cursor: grabbing; }
+  .clip-order .clip-pill.drag-over {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 2px #fff;
+  }
+  .clip-order .clip-pill.dragging {
+    opacity: 0.5;
+  }
+  .clip-pill .pill-arrows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-left: 4px;
+  }
+  .clip-pill .pill-arrow {
+    background: none;
+    border: none;
+    color: #1a1a2e;
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0.6;
+  }
+  .clip-pill .pill-arrow:hover { opacity: 1; }
+
+  /* Duplicate takes */
+  .dup-group {
+    background: #0d1b33;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+    border-left: 3px solid #f0a500;
+  }
+  .dup-group .dup-label {
+    font-size: 12px;
+    color: #f0a500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .dup-take {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(15,52,96,0.4);
+    font-size: 14px;
+  }
+  .dup-take:last-child { border-bottom: none; }
+  .dup-take .take-text {
+    flex: 1;
+    cursor: pointer;
+    color: #e0e0e0;
+  }
+  .dup-take .take-text:hover { color: #4ecca3; }
+  .dup-take .take-time {
+    font-size: 12px;
+    color: #7f8c9b;
+    min-width: 50px;
+  }
+  .dup-take .take-sim {
+    font-size: 11px;
+    color: #f0a500;
+    min-width: 40px;
+  }
+
+  /* Captions */
+  .caption-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 980px) {
+    .caption-layout { grid-template-columns: 1fr; }
+  }
+  .caption-stage {
+    position: relative;
+    width: 100%;
+    background: #05070d;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .caption-stage video {
+    display: block;
+    width: 100%;
+    background: #000;
+  }
+  .caption-layout .video-time {
+    font-size: 13px;
+    color: #7f8c9b;
+    margin-top: 8px;
+  }
+  .caption-overlay {
+    position: absolute;
+    left: 50%;
+    top: 82%;
+    max-width: 88%;
+    padding: 0.16em 0.42em;
+    border-radius: 6px;
+    color: #fff8d7;
+    background: rgba(0, 0, 0, 0.38);
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1.08;
+    text-align: center;
+    white-space: pre-line;
+    transform: translate(-50%, -50%);
+    text-shadow: 0 2px 0 rgba(0,0,0,0.95), 0 0 10px rgba(0,0,0,0.8);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+  }
+  .caption-overlay.dragging { cursor: grabbing; }
+  .caption-controls {
+    display: grid;
+    gap: 14px;
+  }
+  .caption-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  @media (max-width: 520px) {
+    .caption-preset-grid { grid-template-columns: 1fr; }
+  }
+  .caption-preset {
+    border: 1px solid rgba(127, 140, 155, 0.28);
+    border-radius: 8px;
+    padding: 10px;
+    background: #0d1b33;
+    color: #e0e0e0;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .caption-preset:hover {
+    border-color: #4ecca3;
+    background: rgba(79, 204, 163, 0.08);
+  }
+  .caption-preset.active { border-color: #4ecca3; }
+  .caption-preset strong {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .caption-preset span {
+    display: block;
+    font-size: 11px;
+    color: #7f8c9b;
+    line-height: 1.35;
+  }
+  .caption-control-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  @media (max-width: 520px) {
+    .caption-control-row { grid-template-columns: 1fr; }
+  }
+  .field-group label {
+    display: block;
+    font-size: 13px;
+    color: #7f8c9b;
+    margin-bottom: 6px;
+  }
+  .field-group input[type="text"],
+  .field-group select {
+    width: 100%;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    background: #0d1b33;
+    color: #e0e0e0;
+    font-size: 14px;
+    padding: 9px 10px;
+    outline: none;
+  }
+  .field-group input[type="text"]:focus,
+  .field-group select:focus {
+    border-color: #4ecca3;
+  }
+  .color-control {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .color-control input[type="color"] {
+    width: 42px;
+    height: 36px;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 2px;
+    background: #0d1b33;
+    cursor: pointer;
+  }
+  .check-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    color: #e0e0e0;
+  }
+  .check-row input { width: 16px; height: 16px; accent-color: #4ecca3; }
+  .caption-cue-list {
+    max-height: 170px;
+    overflow-y: auto;
+    margin-top: 10px;
+    padding: 10px;
+    background: #0d1b33;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .caption-cue {
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(15,52,96,0.35);
+  }
+  .caption-cue:last-child { border-bottom: none; }
+  .caption-cue time { color: #4ecca3; font-variant-numeric: tabular-nums; }
+  .caption-cue textarea {
+    width: 100%;
+    min-height: 38px;
+    resize: vertical;
+    border: 1px solid rgba(15,52,96,0.8);
+    border-radius: 7px;
+    background: #09182d;
+    color: #e0e0e0;
+    font: inherit;
+    line-height: 1.35;
+    padding: 7px 8px;
+    outline: none;
+  }
+  .caption-cue textarea:focus {
+    border-color: #4ecca3;
+    box-shadow: 0 0 0 2px rgba(79,204,163,0.12);
+  }
+  .caption-empty {
+    color: #7f8c9b;
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
 
-<h1>Silence Remover</h1>
-
-<!-- 1. File Selection -->
-<div class="card">
-  <h2>1. Select Video</h2>
-  <div class="drop-zone" id="drop-zone">
-    <p>Drop an MP4 here or click to browse</p>
-    <input type="file" id="file-input" accept="video/mp4,video/*">
-  </div>
-  <div class="file-info" id="file-info"></div>
-  <div class="error hidden" id="upload-error"></div>
-</div>
-
-<!-- 2. Configuration -->
-<div class="card" id="config-section">
-  <h2>2. Configure Detection</h2>
-  <div class="slider-group">
-    <label>Silence Threshold <span id="threshold-val">-35 dB</span></label>
-    <input type="range" id="threshold" min="-60" max="-20" value="-35" step="1">
-  </div>
-  <div class="slider-group">
-    <label>Min Silence Duration <span id="duration-val">0.5s</span></label>
-    <input type="range" id="min-duration" min="0.3" max="5" value="0.5" step="0.1">
-  </div>
-  <div class="slider-group">
-    <label>Padding (keep around speech) <span id="padding-val">100ms</span></label>
-    <input type="range" id="padding" min="0" max="500" value="100" step="10">
-  </div>
-  <div class="actions">
-    <button class="btn btn-primary" id="detect-btn" disabled>Detect Silences</button>
-  </div>
-  <div class="error hidden" id="detect-error"></div>
-</div>
-
-<!-- 3. Results -->
-<div class="card hidden" id="results-section">
-  <h2>3. Review</h2>
-  <div class="summary" id="summary"></div>
-  <div class="table-scroll">
-    <table class="segment-table">
-      <thead><tr><th>#</th><th>Start</th><th>End</th><th>Duration</th><th>Type</th></tr></thead>
-      <tbody id="segment-tbody"></tbody>
-    </table>
+<div class="header">
+  <h1>Vid-Edit</h1>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="silence">Silence Remover</button>
+    <button class="tab-btn" data-tab="editor">Transcript Editor</button>
+    <button class="tab-btn" data-tab="captions">Captions</button>
   </div>
 </div>
 
-<!-- 4. Process -->
-<div class="card hidden" id="process-section">
-  <h2>4. Process</h2>
-  <div class="actions">
-    <button class="btn btn-action" id="process-btn">Remove Silences & Download</button>
+<!-- ===================== TAB 1: SILENCE REMOVER ===================== -->
+<div id="tab-silence" class="tab-content active">
+
+  <div class="card">
+    <h2>1. Select Video</h2>
+    <div class="drop-zone" id="drop-zone">
+      <p>Drop an MP4 here or click to browse</p>
+      <input type="file" id="file-input" accept="video/mp4,video/*">
+    </div>
+    <div class="file-info" id="file-info"></div>
+    <div class="error hidden" id="upload-error"></div>
   </div>
-  <div class="status hidden" id="status"></div>
-  <div class="error hidden" id="process-error"></div>
+
+  <div class="card" id="config-section">
+    <h2>2. Configure Detection</h2>
+    <div class="slider-group">
+      <label>Silence Threshold <span id="threshold-val">-35 dB</span></label>
+      <input type="range" id="threshold" min="-60" max="-20" value="-35" step="1">
+    </div>
+    <div class="slider-group">
+      <label>Min Silence Duration <span id="duration-val">0.50s</span></label>
+      <input type="range" id="min-duration" min="0.1" max="5" value="0.50" step="0.05">
+    </div>
+    <div class="slider-group">
+      <label>Padding (keep around speech) <span id="padding-val">200ms</span></label>
+      <input type="range" id="padding" min="0" max="1000" value="200" step="10">
+    </div>
+    <div class="slider-group">
+      <label class="check-row"><input type="checkbox" id="speech-aware" checked> Speech-aware cleanup</label>
+    </div>
+    <div class="slider-group">
+      <label class="check-row"><input type="checkbox" id="remove-fillers" checked> Remove isolated ums/uhs</label>
+    </div>
+    <div class="actions">
+      <button class="btn" id="detect-btn" disabled>Detect Silences</button>
+      <button class="btn btn-primary" id="detect-remove-btn" disabled>Detect and Remove</button>
+    </div>
+    <div class="error hidden" id="detect-error"></div>
+  </div>
+
+  <div class="card hidden" id="results-section">
+    <h2>3. Review</h2>
+    <div class="summary" id="summary"></div>
+    <div class="table-scroll">
+      <table class="segment-table">
+        <thead><tr><th>#</th><th>Start</th><th>End</th><th>Duration</th><th>Type</th></tr></thead>
+        <tbody id="segment-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card hidden" id="process-section">
+    <h2>4. Process</h2>
+    <div class="actions">
+      <button class="btn btn-action" id="process-btn">Remove Silences & Download</button>
+    </div>
+    <div class="status hidden" id="status"></div>
+    <div class="error hidden" id="process-error"></div>
+  </div>
+
+</div>
+
+<!-- ===================== TAB 2: TRANSCRIPT EDITOR ===================== -->
+<div id="tab-editor" class="tab-content">
+
+  <div class="card">
+    <h2>Video</h2>
+    <div id="editor-upload-area">
+      <div class="drop-zone" id="editor-drop-zone">
+        <p>Drop an MP4 here or click to browse</p>
+        <input type="file" id="editor-file-input" accept="video/mp4,video/*">
+      </div>
+      <div class="file-info" id="editor-file-info"></div>
+      <div class="error hidden" id="editor-upload-error"></div>
+      <div class="actions" id="editor-use-tab1" style="display:none">
+        <button class="btn btn-primary btn-sm" id="use-tab1-btn">Use video from Silence Remover</button>
+        <span style="font-size:13px;color:#7f8c9b">or drop a new file above</span>
+      </div>
+    </div>
+    <div class="actions" id="transcribe-actions" style="display:none">
+      <button class="btn btn-primary" id="transcribe-btn">Transcribe</button>
+    </div>
+    <div class="error hidden" id="transcribe-error"></div>
+  </div>
+
+  <div class="card hidden" id="editor-main">
+    <div class="toolbar">
+      <button class="btn btn-danger btn-sm" id="cut-btn" disabled>Cut Selected</button>
+      <button class="btn btn-primary btn-sm" id="undo-btn" disabled>Undo</button>
+      <span class="hint">Drag to select words. Space = play/pause. Delete = cut. Reorder clips below timeline.</span>
+    </div>
+    <div class="editor-layout">
+      <div class="video-panel">
+        <video id="editor-video" controls></video>
+        <div class="video-time" id="editor-video-time">0:00.0</div>
+      </div>
+      <div class="transcript-panel" id="transcript"></div>
+    </div>
+    <div class="timeline-container">
+      <div class="timeline-label">Timeline <span id="tl-info" style="color:#4ecca3"></span></div>
+      <div class="timeline" id="timeline">
+        <div class="tl-playhead" id="tl-playhead"></div>
+        <div class="tl-times"><span id="tl-start">0:00</span><span id="tl-end">0:00</span></div>
+      </div>
+      <div class="clip-order-label">Clip Order <span style="color:#7f8c9b;font-weight:normal">(drag to reorder, arrows to move)</span></div>
+      <div class="clip-order" id="clip-order"></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="duplicates-section">
+    <h2>Duplicate Takes</h2>
+    <div id="duplicates-list"></div>
+    <div class="summary hidden" id="no-duplicates">No duplicate takes detected.</div>
+  </div>
+
+  <div class="card hidden" id="export-section">
+    <h2>Export</h2>
+    <div class="summary" id="export-summary"></div>
+    <div class="actions">
+      <button class="btn btn-action" id="export-btn">Export Edited Video</button>
+    </div>
+    <div class="status hidden" id="export-status"></div>
+    <div class="error hidden" id="export-error"></div>
+  </div>
+
+</div>
+
+<!-- ===================== TAB 3: CAPTIONS ===================== -->
+<div id="tab-captions" class="tab-content">
+
+  <div class="card">
+    <h2>Video</h2>
+    <div class="drop-zone" id="caption-drop-zone">
+      <p>Drop an MP4 here or click to browse</p>
+      <input type="file" id="caption-file-input" accept="video/mp4,video/*">
+    </div>
+    <div class="file-info" id="caption-file-info"></div>
+    <div class="error hidden" id="caption-upload-error"></div>
+    <div class="actions" id="caption-use-current" style="display:none">
+      <button class="btn btn-primary btn-sm" id="caption-use-current-btn">Use current video</button>
+      <span style="font-size:13px;color:#7f8c9b">or drop a new file above</span>
+    </div>
+    <div class="actions" id="caption-transcribe-actions" style="display:none">
+      <button class="btn btn-primary" id="caption-transcribe-btn">Transcribe for Captions</button>
+    </div>
+    <div class="error hidden" id="caption-transcribe-error"></div>
+  </div>
+
+  <div class="card hidden" id="caption-workspace">
+    <h2>Caption Preview</h2>
+    <div class="caption-layout">
+      <div>
+        <div class="caption-stage" id="caption-stage">
+          <video id="caption-video" controls></video>
+          <div class="caption-overlay" id="caption-overlay">Caption preview</div>
+        </div>
+        <div class="video-time" id="caption-video-time">0:00.0</div>
+        <div class="caption-cue-list" id="caption-cue-list">
+          <div class="caption-empty">Transcribe a video to build caption cues.</div>
+        </div>
+      </div>
+
+      <div class="caption-controls">
+        <div>
+          <h2>Examples</h2>
+          <div class="caption-preset-grid" id="caption-preset-grid"></div>
+        </div>
+
+        <div>
+          <h2>Manual Adjustments</h2>
+          <div class="slider-group">
+            <label>Size <span id="caption-size-val">6.2%</span></label>
+            <input type="range" id="caption-size" min="3" max="12" value="6.2" step="0.1">
+          </div>
+          <div class="slider-group">
+            <label>Horizontal Position <span id="caption-x-val">50%</span></label>
+            <input type="range" id="caption-x" min="0" max="100" value="50" step="1">
+          </div>
+          <div class="slider-group">
+            <label>Vertical Position <span id="caption-y-val">82%</span></label>
+            <input type="range" id="caption-y" min="0" max="100" value="82" step="1">
+          </div>
+          <div class="caption-control-row">
+            <div class="slider-group">
+              <label>Words per Caption <span id="caption-words-val">7</span></label>
+              <input type="range" id="caption-words" min="2" max="12" value="7" step="1">
+            </div>
+            <div class="slider-group">
+              <label>Line Width <span id="caption-line-val">30</span></label>
+              <input type="range" id="caption-line" min="18" max="52" value="30" step="1">
+            </div>
+          </div>
+          <div class="caption-control-row">
+            <div class="field-group">
+              <label for="caption-font">Font</label>
+              <select id="caption-font">
+                <option>Arial</option>
+                <option>Helvetica</option>
+                <option>Impact</option>
+                <option>Georgia</option>
+                <option>Courier New</option>
+              </select>
+            </div>
+            <label class="check-row" style="align-self:end">
+              <input type="checkbox" id="caption-uppercase" checked>
+              Uppercase captions
+            </label>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" id="caption-single-line">
+            One line only
+          </label>
+          <label class="check-row">
+            <input type="checkbox" id="caption-smart-split" checked>
+            Smart phrase splitting
+          </label>
+          <div class="caption-control-row">
+            <div class="field-group">
+              <label>Text Colour</label>
+              <div class="color-control">
+                <input type="color" id="caption-color" value="#fff8d7">
+                <span id="caption-color-val">#fff8d7</span>
+              </div>
+            </div>
+            <div class="field-group">
+              <label>Background Colour</label>
+              <div class="color-control">
+                <input type="color" id="caption-bg-color" value="#000000">
+                <span id="caption-bg-val">#000000</span>
+              </div>
+            </div>
+          </div>
+          <div class="caption-control-row">
+            <div class="slider-group">
+              <label>Background Opacity <span id="caption-bg-opacity-val">38%</span></label>
+              <input type="range" id="caption-bg-opacity" min="0" max="90" value="38" step="1">
+            </div>
+            <div class="slider-group">
+              <label>Outline <span id="caption-outline-val">3</span></label>
+              <input type="range" id="caption-outline" min="0" max="10" value="3" step="0.5">
+            </div>
+          </div>
+          <div class="slider-group">
+            <label>Shadow <span id="caption-shadow-val">2</span></label>
+            <input type="range" id="caption-shadow" min="0" max="8" value="2" step="0.5">
+          </div>
+        </div>
+
+        <div>
+          <h2>Saved Presets</h2>
+          <div class="caption-control-row">
+            <div class="field-group">
+              <label for="caption-preset-name">Preset Name</label>
+              <input type="text" id="caption-preset-name" placeholder="My caption style">
+            </div>
+            <button class="btn btn-primary" id="caption-save-preset-btn" style="align-self:end">Save Preset</button>
+          </div>
+          <div class="caption-preset-grid" id="caption-saved-presets"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="caption-render-section">
+    <h2>Render</h2>
+    <div class="summary" id="caption-render-summary"></div>
+    <div class="actions">
+      <button class="btn btn-action" id="caption-render-btn">Render Captioned Video</button>
+    </div>
+    <div class="status hidden" id="caption-render-status"></div>
+    <div class="error hidden" id="caption-render-error"></div>
+  </div>
+
 </div>
 
 <script>
-// ---- State ----
-let selectedFile = null;
-let totalDuration = 0;
-let nonSilentSegments = [];
-let fileUploaded = false;
+// ============================================================
+//  SHARED
+// ============================================================
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.round((sec % 1) * 10);
+  return `${m}:${String(s).padStart(2, '0')}.${ms}`;
+}
 
-// ---- DOM refs ----
+let sharedFileUploaded = false; // tracks if any tab has uploaded a file
+let sharedVideoDuration = 0;
+let sharedVideoName = '';
+
+// ---- Tab switching ----
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+
+    // Show reuse buttons if a file has already been uploaded
+    if (btn.dataset.tab === 'editor' && sharedFileUploaded) {
+      document.getElementById('editor-use-tab1').style.display = '';
+    }
+    if (btn.dataset.tab === 'captions' && sharedFileUploaded) {
+      document.getElementById('caption-use-current').style.display = '';
+    }
+  });
+});
+
+// ============================================================
+//  TAB 1: SILENCE REMOVER (unchanged logic)
+// ============================================================
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const fileInfo = document.getElementById('file-info');
@@ -225,10 +910,13 @@ const uploadError = document.getElementById('upload-error');
 const thresholdSlider = document.getElementById('threshold');
 const durationSlider = document.getElementById('min-duration');
 const paddingSlider = document.getElementById('padding');
+const speechAwareCheckbox = document.getElementById('speech-aware');
+const removeFillersCheckbox = document.getElementById('remove-fillers');
 const thresholdVal = document.getElementById('threshold-val');
 const durationVal = document.getElementById('duration-val');
 const paddingVal = document.getElementById('padding-val');
 const detectBtn = document.getElementById('detect-btn');
+const detectRemoveBtn = document.getElementById('detect-remove-btn');
 const detectError = document.getElementById('detect-error');
 const resultsSection = document.getElementById('results-section');
 const summaryEl = document.getElementById('summary');
@@ -238,7 +926,11 @@ const processBtn = document.getElementById('process-btn');
 const statusEl = document.getElementById('status');
 const processError = document.getElementById('process-error');
 
-// ---- File Selection ----
+let selectedFile = null;
+let totalDuration = 0;
+let nonSilentSegments = [];
+let fileUploaded = false;
+
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -249,6 +941,14 @@ dropZone.addEventListener('drop', e => {
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
 
+async function uploadFileToServer(file) {
+  const resp = await fetch(`/api/upload?filename=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    body: file
+  });
+  return await resp.json();
+}
+
 async function handleFile(file) {
   selectedFile = file;
   fileUploaded = false;
@@ -257,23 +957,23 @@ async function handleFile(file) {
   fileInfo.style.display = 'block';
   fileInfo.innerHTML = `<span class="spinner"></span> Uploading ${file.name} (${sizeMB} MB)...`;
   detectBtn.disabled = true;
+  detectRemoveBtn.disabled = true;
   uploadError.classList.add('hidden');
   resultsSection.classList.add('hidden');
   processSection.classList.add('hidden');
 
   try {
-    const resp = await fetch('/api/upload', {
-      method: 'POST',
-      body: file
-    });
-    const data = await resp.json();
-
+    const data = await uploadFileToServer(file);
     if (!data.ok) throw new Error(data.error);
 
     totalDuration = data.duration;
     fileUploaded = true;
+    sharedFileUploaded = true;
+    sharedVideoDuration = data.duration;
+    sharedVideoName = file.name;
     fileInfo.innerHTML = `${file.name} — ${sizeMB} MB — ${formatTime(totalDuration)}`;
     detectBtn.disabled = false;
+    detectRemoveBtn.disabled = false;
   } catch (err) {
     fileInfo.innerHTML = `${file.name} — ${sizeMB} MB`;
     uploadError.textContent = `Upload failed: ${err.message}`;
@@ -281,19 +981,22 @@ async function handleFile(file) {
   }
 }
 
-// ---- Sliders ----
 thresholdSlider.addEventListener('input', () => thresholdVal.textContent = `${thresholdSlider.value} dB`);
-durationSlider.addEventListener('input', () => durationVal.textContent = `${parseFloat(durationSlider.value).toFixed(1)}s`);
+durationSlider.addEventListener('input', () => durationVal.textContent = `${parseFloat(durationSlider.value).toFixed(2)}s`);
 paddingSlider.addEventListener('input', () => paddingVal.textContent = `${paddingSlider.value}ms`);
 
-// ---- Silence Detection ----
-detectBtn.addEventListener('click', runDetection);
+detectBtn.addEventListener('click', () => runDetection(false));
+detectRemoveBtn.addEventListener('click', () => runDetection(true));
 
-async function runDetection() {
+async function runDetection(autoProcess) {
   if (!fileUploaded) return;
 
-  detectBtn.innerHTML = '<span class="spinner"></span> Detecting...';
+  const activeBtn = autoProcess ? detectRemoveBtn : detectBtn;
+  const speechAware = speechAwareCheckbox.checked;
+  const removeFillers = removeFillersCheckbox.checked;
+  activeBtn.innerHTML = `<span class="spinner"></span> ${speechAware ? 'Transcribing...' : 'Detecting...'}`;
   detectBtn.disabled = true;
+  detectRemoveBtn.disabled = true;
   detectError.classList.add('hidden');
   resultsSection.classList.add('hidden');
   processSection.classList.add('hidden');
@@ -306,57 +1009,80 @@ async function runDetection() {
     const resp = await fetch('/api/detect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ threshold, minDuration })
+      body: JSON.stringify({ threshold, minDuration, padding, speechAware, removeFillers })
     });
     const data = await resp.json();
-
     if (!data.ok) throw new Error(data.error);
 
     totalDuration = data.totalDuration;
-    const silences = data.silences;
+    const silences = data.silences || [];
+    const speechMode = data.mode === 'speech' && Array.isArray(data.segments);
 
-    // Build non-silent segments with padding
     nonSilentSegments = [];
     const allSegments = [];
-    let cursor = 0;
 
-    for (const s of silences) {
-      const keepEnd = Math.min(s.start + padding, totalDuration);
-      const keepStart = Math.max(s.end - padding, 0);
+    if (speechMode) {
+      nonSilentSegments = data.segments
+        .map(seg => ({
+          start: Math.max(0, Math.min(Number(seg.start), totalDuration)),
+          end: Math.max(0, Math.min(Number(seg.end), totalDuration))
+        }))
+        .filter(seg => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start);
 
-      if (cursor < keepEnd) {
-        nonSilentSegments.push({ start: cursor, end: keepEnd });
-        allSegments.push({ start: cursor, end: keepEnd, type: 'keep' });
+      let cursor = 0;
+      for (const seg of nonSilentSegments) {
+        if (cursor < seg.start) allSegments.push({ start: cursor, end: seg.start, type: 'silent' });
+        allSegments.push({ start: seg.start, end: seg.end, type: 'keep' });
+        cursor = Math.max(cursor, seg.end);
       }
-      allSegments.push({ start: s.start, end: s.end, type: 'silent' });
-      cursor = Math.max(keepStart, cursor);
-    }
-    if (cursor < totalDuration) {
-      nonSilentSegments.push({ start: cursor, end: totalDuration });
-      allSegments.push({ start: cursor, end: totalDuration, type: 'keep' });
-    }
-
-    // Merge adjacent segments with tiny gaps
-    const merged = [];
-    for (const seg of nonSilentSegments) {
-      if (merged.length && (seg.start - merged[merged.length - 1].end) < 0.1) {
-        merged[merged.length - 1].end = seg.end;
-      } else {
-        merged.push({ ...seg });
+      if (cursor < totalDuration) {
+        allSegments.push({ start: cursor, end: totalDuration, type: 'silent' });
       }
-    }
-    nonSilentSegments = merged;
+    } else {
+      let cursor = 0;
 
-    // Render
-    const silentTime = silences.reduce((sum, s) => sum + (s.end - s.start), 0);
+      for (const s of silences) {
+        const keepEnd = Math.min(s.start + padding, totalDuration);
+        const keepStart = Math.max(s.end - padding, 0);
+        if (cursor < keepEnd) {
+          nonSilentSegments.push({ start: cursor, end: keepEnd });
+          allSegments.push({ start: cursor, end: keepEnd, type: 'keep' });
+        }
+        allSegments.push({ start: s.start, end: s.end, type: 'silent' });
+        cursor = Math.max(keepStart, cursor);
+      }
+      if (cursor < totalDuration) {
+        nonSilentSegments.push({ start: cursor, end: totalDuration });
+        allSegments.push({ start: cursor, end: totalDuration, type: 'keep' });
+      }
+
+      const merged = [];
+      for (const seg of nonSilentSegments) {
+        if (merged.length && (seg.start - merged[merged.length - 1].end) < 0.15) {
+          merged[merged.length - 1].end = seg.end;
+        } else {
+          merged.push({ ...seg });
+        }
+      }
+      nonSilentSegments = merged;
+    }
+
     const outputDuration = nonSilentSegments.reduce((sum, s) => sum + (s.end - s.start), 0);
+    const silentTime = speechMode
+      ? Math.max(0, totalDuration - outputDuration)
+      : silences.reduce((sum, s) => sum + (s.end - s.start), 0);
     const pct = Math.round((silentTime / totalDuration) * 100);
+    const gapLabel = speechMode ? 'speech gaps' : 'silent segments';
+    const wordDetail = speechMode ? ` using <strong>${data.wordCount || 0}</strong> transcript words` : '';
+    const fillerDetail = speechMode && data.removedFillerCount
+      ? ` Removed <strong>${data.removedFillerCount}</strong> isolated ums/uhs.`
+      : '';
 
-    summaryEl.innerHTML = `Found <strong>${silences.length}</strong> silent segments ` +
-      `(<strong>${formatTime(silentTime)}</strong> total). ` +
-      `Output: <strong>${formatTime(outputDuration)}</strong> (${pct}% shorter).`;
+    summaryEl.innerHTML = `Found <strong>${silences.length}</strong> ${gapLabel}${wordDetail} ` +
+      `(<strong>${formatTime(silentTime)}</strong> removed). ` +
+      `Output: <strong>${formatTime(outputDuration)}</strong> (${pct}% shorter).${fillerDetail}`;
+    if (data.warning) summaryEl.innerHTML += `<br>${data.warning}`;
 
-    // Segment table
     const sorted = [...allSegments].sort((a, b) => a.start - b.start);
     segmentTbody.innerHTML = sorted.map((s, i) =>
       `<tr class="${s.type === 'silent' ? 'silent' : 'keep'}">
@@ -369,7 +1095,6 @@ async function runDetection() {
     ).join('');
 
     resultsSection.classList.remove('hidden');
-
     if (silences.length > 0) {
       processSection.classList.remove('hidden');
       processBtn.disabled = false;
@@ -377,17 +1102,51 @@ async function runDetection() {
       summaryEl.innerHTML = 'No silences found at this threshold. Try raising the threshold.';
     }
 
+    if (autoProcess && silences.length > 0) {
+      detectRemoveBtn.innerHTML = 'Detect and Remove';
+      detectBtn.disabled = false;
+      detectRemoveBtn.disabled = false;
+      await processVideo();
+      return;
+    }
   } catch (err) {
     detectError.textContent = `Detection failed: ${err.message}`;
     detectError.classList.remove('hidden');
   } finally {
     detectBtn.innerHTML = 'Detect Silences';
+    detectRemoveBtn.innerHTML = 'Detect and Remove';
     detectBtn.disabled = false;
+    detectRemoveBtn.disabled = false;
   }
 }
 
-// ---- Process ----
 processBtn.addEventListener('click', processVideo);
+
+function trackProgress(statusElement, label) {
+  statusElement.innerHTML = `
+    <div>${label}</div>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+      <div class="progress-label">0%</div>
+    </div>`;
+  const fill = statusElement.querySelector('.progress-fill');
+  const pct = statusElement.querySelector('.progress-label');
+  let stopped = false;
+
+  const poll = async () => {
+    if (stopped) return;
+    try {
+      const r = await fetch('/api/progress');
+      const d = await r.json();
+      const p = Math.max(0, Math.min(100, d.percent || 0));
+      fill.style.width = p.toFixed(1) + '%';
+      pct.textContent = p.toFixed(0) + '%';
+    } catch (_) {}
+  };
+  poll();
+  const id = setInterval(poll, 1000);
+  return () => { stopped = true; clearInterval(id); };
+}
 
 async function processVideo() {
   if (nonSilentSegments.length === 0) return;
@@ -395,8 +1154,8 @@ async function processVideo() {
   processBtn.innerHTML = '<span class="spinner"></span> Processing...';
   processBtn.disabled = true;
   processError.classList.add('hidden');
-  statusEl.textContent = 'FFmpeg is cutting and re-encoding your video...';
   statusEl.classList.remove('hidden');
+  const stopPolling = trackProgress(statusEl, 'FFmpeg is cutting and re-encoding your video...');
 
   try {
     const resp = await fetch('/api/process', {
@@ -405,10 +1164,8 @@ async function processVideo() {
       body: JSON.stringify({ segments: nonSilentSegments })
     });
     const data = await resp.json();
-
     if (!data.ok) throw new Error(data.error);
 
-    // Trigger download
     const a = document.createElement('a');
     a.href = data.downloadUrl;
     const baseName = selectedFile.name.replace(/\.[^.]+$/, '');
@@ -418,9 +1175,10 @@ async function processVideo() {
     document.body.removeChild(a);
 
     const sizeMB = (data.size / 1024 / 1024).toFixed(1);
+    stopPolling();
     statusEl.textContent = `Done! Downloaded (${sizeMB} MB).`;
-
   } catch (err) {
+    stopPolling();
     processError.textContent = `Processing failed: ${err.message}`;
     processError.classList.remove('hidden');
     statusEl.classList.add('hidden');
@@ -430,13 +1188,1552 @@ async function processVideo() {
   }
 }
 
-// ---- Utils ----
-function formatTime(sec) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  const ms = Math.round((sec % 1) * 10);
-  return `${m}:${String(s).padStart(2, '0')}.${ms}`;
+// ============================================================
+//  TAB 2: TRANSCRIPT EDITOR
+// ============================================================
+const editorDropZone = document.getElementById('editor-drop-zone');
+const editorFileInput = document.getElementById('editor-file-input');
+const editorFileInfo = document.getElementById('editor-file-info');
+const editorUploadError = document.getElementById('editor-upload-error');
+const useTab1Btn = document.getElementById('use-tab1-btn');
+const transcribeBtn = document.getElementById('transcribe-btn');
+const transcribeError = document.getElementById('transcribe-error');
+const editorMain = document.getElementById('editor-main');
+const editorVideo = document.getElementById('editor-video');
+const editorVideoTime = document.getElementById('editor-video-time');
+const transcriptEl = document.getElementById('transcript');
+const cutBtn = document.getElementById('cut-btn');
+const undoBtn = document.getElementById('undo-btn');
+const duplicatesSection = document.getElementById('duplicates-section');
+const duplicatesList = document.getElementById('duplicates-list');
+const noDuplicates = document.getElementById('no-duplicates');
+const exportSection = document.getElementById('export-section');
+const exportSummary = document.getElementById('export-summary');
+const exportBtn = document.getElementById('export-btn');
+const exportStatus = document.getElementById('export-status');
+const exportError = document.getElementById('export-error');
+const timeline = document.getElementById('timeline');
+const tlPlayhead = document.getElementById('tl-playhead');
+const tlInfo = document.getElementById('tl-info');
+const clipOrderEl = document.getElementById('clip-order');
+
+let editorFileReady = false;
+let editorTotalDuration = 0;
+let transcriptWords = [];      // [{word, start, end, cut, el, index}, ...]
+let transcriptSegments = [];
+let selectedWordIndices = new Set();
+let undoStack = [];
+let clipOrder = [];            // [{start, end, id}, ...] — reorderable output clips
+let duplicateGroups = [];      // stored for sync
+let isDragging = false;        // for drag-select in transcript
+let dragStartIdx = null;
+
+// ---- Editor file selection ----
+editorDropZone.addEventListener('click', () => editorFileInput.click());
+editorDropZone.addEventListener('dragover', e => { e.preventDefault(); editorDropZone.classList.add('dragover'); });
+editorDropZone.addEventListener('dragleave', () => editorDropZone.classList.remove('dragover'));
+editorDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  editorDropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleEditorFile(e.dataTransfer.files[0]);
+});
+editorFileInput.addEventListener('change', () => { if (editorFileInput.files.length) handleEditorFile(editorFileInput.files[0]); });
+
+async function handleEditorFile(file) {
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+  editorFileInfo.style.display = 'block';
+  editorFileInfo.innerHTML = `<span class="spinner"></span> Uploading ${file.name} (${sizeMB} MB)...`;
+  editorUploadError.classList.add('hidden');
+  editorFileReady = false;
+
+  try {
+    const data = await uploadFileToServer(file);
+    if (!data.ok) throw new Error(data.error);
+    editorFileReady = true;
+    editorTotalDuration = data.duration;
+    sharedFileUploaded = true;
+    sharedVideoDuration = data.duration;
+    sharedVideoName = file.name;
+    editorFileInfo.innerHTML = `${file.name} — ${sizeMB} MB — ${formatTime(data.duration)}`;
+    document.getElementById('transcribe-actions').style.display = '';
+    transcribeBtn.disabled = false;
+  } catch (err) {
+    editorFileInfo.innerHTML = `${file.name} — ${sizeMB} MB`;
+    editorUploadError.textContent = `Upload failed: ${err.message}`;
+    editorUploadError.classList.remove('hidden');
+  }
 }
+
+useTab1Btn.addEventListener('click', () => {
+  if (!sharedFileUploaded) return;
+  editorFileReady = true;
+  editorTotalDuration = sharedVideoDuration || totalDuration;
+  editorFileInfo.style.display = 'block';
+  editorFileInfo.innerHTML = sharedVideoName ? `Using ${sharedVideoName}` : 'Using current uploaded video';
+  document.getElementById('transcribe-actions').style.display = '';
+  transcribeBtn.disabled = false;
+  editorVideo.src = '/api/video';
+});
+
+// ---- Transcription ----
+transcribeBtn.addEventListener('click', runTranscribe);
+
+async function runTranscribe() {
+  if (!editorFileReady) return;
+
+  transcribeBtn.innerHTML = '<span class="spinner"></span> Transcribing...';
+  transcribeBtn.disabled = true;
+  transcribeError.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/transcribe', { method: 'POST' });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error);
+
+    transcriptWords = data.words.map((w, i) => ({ ...w, cut: false, index: i }));
+    transcriptSegments = data.segments;
+
+    editorVideo.src = '/api/video';
+    renderTranscript();
+    editorMain.classList.remove('hidden');
+    exportSection.classList.remove('hidden');
+    refreshAll();
+    await findDuplicates();
+  } catch (err) {
+    transcribeError.textContent = `Transcription failed: ${err.message}`;
+    transcribeError.classList.remove('hidden');
+  } finally {
+    transcribeBtn.innerHTML = 'Transcribe';
+    transcribeBtn.disabled = false;
+  }
+}
+
+// ---- Central refresh — keeps everything in sync ----
+function refreshAll() {
+  updateClipOrder();
+  renderTimeline();
+  renderClipPills();
+  updateExportSummary();
+  updateDuplicateStyles();
+  rebuildCutRegions();
+}
+
+// ---- Transcript Rendering ----
+function renderTranscript() {
+  transcriptEl.innerHTML = '';
+  let segIdx = 0;
+
+  for (let i = 0; i < transcriptWords.length; i++) {
+    const w = transcriptWords[i];
+
+    if (segIdx < transcriptSegments.length - 1 && w.start >= transcriptSegments[segIdx + 1].start) {
+      segIdx++;
+      const br = document.createElement('span');
+      br.className = 'segment-break';
+      transcriptEl.appendChild(br);
+    }
+
+    const span = document.createElement('span');
+    span.className = 'word';
+    if (w.cut) span.classList.add('cut');
+    span.textContent = w.word + ' ';
+    span.dataset.index = i;
+
+    // Drag-select handlers
+    span.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      isDragging = true;
+      dragStartIdx = i;
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) clearSelection();
+      selectWord(i);
+    });
+    span.addEventListener('mouseenter', () => {
+      if (isDragging && dragStartIdx !== null) {
+        // Select range from dragStart to current
+        clearSelection();
+        const lo = Math.min(dragStartIdx, i);
+        const hi = Math.max(dragStartIdx, i);
+        for (let j = lo; j <= hi; j++) selectWord(j);
+      }
+    });
+
+    w.el = span;
+    transcriptEl.appendChild(span);
+  }
+}
+
+document.addEventListener('mouseup', () => {
+  if (isDragging) {
+    isDragging = false;
+    cutBtn.disabled = selectedWordIndices.size === 0;
+  }
+});
+
+function selectWord(i) {
+  selectedWordIndices.add(i);
+  transcriptWords[i].el.classList.add('selected');
+  cutBtn.disabled = false;
+}
+
+function clearSelection() {
+  for (const idx of selectedWordIndices) {
+    transcriptWords[idx].el.classList.remove('selected');
+  }
+  selectedWordIndices.clear();
+  cutBtn.disabled = true;
+}
+
+// ---- Cut / Undo ----
+cutBtn.addEventListener('click', cutSelected);
+undoBtn.addEventListener('click', undoLast);
+
+function cutWordIndices(indices) {
+  const toCut = indices.filter(i => !transcriptWords[i].cut);
+  if (toCut.length === 0) return;
+
+  undoStack.push({ action: 'cut', indices: toCut });
+  undoBtn.disabled = false;
+
+  for (const i of toCut) {
+    transcriptWords[i].cut = true;
+    transcriptWords[i].el.classList.add('cut');
+  }
+  refreshAll();
+}
+
+function restoreWordIndices(indices) {
+  const toRestore = indices.filter(i => transcriptWords[i].cut);
+  if (toRestore.length === 0) return;
+
+  undoStack.push({ action: 'restore', indices: toRestore });
+  undoBtn.disabled = false;
+
+  for (const i of toRestore) {
+    transcriptWords[i].cut = false;
+    transcriptWords[i].el.classList.remove('cut');
+  }
+  refreshAll();
+}
+
+function cutSelected() {
+  if (selectedWordIndices.size === 0) return;
+  cutWordIndices([...selectedWordIndices]);
+  clearSelection();
+}
+
+function undoLast() {
+  if (undoStack.length === 0) return;
+  const entry = undoStack.pop();
+  if (entry.action === 'cut') {
+    for (const i of entry.indices) {
+      transcriptWords[i].cut = false;
+      transcriptWords[i].el.classList.remove('cut');
+    }
+  } else if (entry.action === 'restore') {
+    for (const i of entry.indices) {
+      transcriptWords[i].cut = true;
+      transcriptWords[i].el.classList.add('cut');
+    }
+  } else if (entry.action === 'reorder') {
+    clipOrder = entry.previousOrder;
+  }
+  undoBtn.disabled = undoStack.length === 0;
+  refreshAll();
+}
+
+// ---- Keyboard shortcuts ----
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  const editorActive = document.getElementById('tab-editor').classList.contains('active');
+  if (!editorActive) return;
+
+  // Space: play/pause from current word or cursor
+  if (e.key === ' ' || e.code === 'Space') {
+    e.preventDefault();
+    if (editorVideo.paused) {
+      // If a word is selected, play from that word
+      if (selectedWordIndices.size > 0) {
+        const firstIdx = Math.min(...selectedWordIndices);
+        editorVideo.currentTime = transcriptWords[firstIdx].start;
+      }
+      editorVideo.play();
+    } else {
+      editorVideo.pause();
+    }
+    return;
+  }
+
+  // Delete/Backspace: cut
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedWordIndices.size > 0) {
+    e.preventDefault();
+    cutSelected();
+    return;
+  }
+
+  // Ctrl/Cmd+Z: undo
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+    e.preventDefault();
+    undoLast();
+    return;
+  }
+
+});
+
+// ---- Video sync + smart playback (skip cut regions) ----
+let cutRegionsCache = [];
+
+function rebuildCutRegions() {
+  // Build sorted list of cut time ranges
+  const kept = getKeptSegments();
+  cutRegionsCache = [];
+  let cursor = 0;
+  for (const seg of kept) {
+    if (seg.start > cursor + 0.05) {
+      cutRegionsCache.push({ start: cursor, end: seg.start });
+    }
+    cursor = seg.end;
+  }
+  if (cursor < editorTotalDuration - 0.05) {
+    cutRegionsCache.push({ start: cursor, end: editorTotalDuration });
+  }
+}
+
+editorVideo.addEventListener('timeupdate', () => {
+  const t = editorVideo.currentTime;
+  editorVideoTime.textContent = formatTime(t);
+
+  // Move timeline playhead
+  if (editorTotalDuration > 0) {
+    const pct = (t / editorTotalDuration) * 100;
+    tlPlayhead.style.left = pct + '%';
+  }
+
+  // Smart playback: skip cut regions while playing
+  if (!editorVideo.paused && cutRegionsCache.length > 0) {
+    for (const region of cutRegionsCache) {
+      if (t >= region.start && t < region.end) {
+        // Find next kept segment to jump to
+        const kept = getKeptSegments();
+        let nextStart = null;
+        for (const seg of kept) {
+          if (seg.start >= region.end - 0.05) {
+            nextStart = seg.start;
+            break;
+          }
+        }
+        if (nextStart !== null) {
+          editorVideo.currentTime = nextStart;
+        } else {
+          editorVideo.pause(); // nothing left to play
+        }
+        return;
+      }
+    }
+  }
+
+  // Highlight current word
+  const prev = transcriptEl.querySelector('.word.current');
+  if (prev) prev.classList.remove('current');
+
+  for (const w of transcriptWords) {
+    if (!w.cut && t >= w.start && t < w.end) {
+      w.el.classList.add('current');
+      w.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      break;
+    }
+  }
+});
+
+// ---- Timeline ----
+function renderTimeline() {
+  // Remove old clips
+  timeline.querySelectorAll('.tl-clip').forEach(el => el.remove());
+
+  if (editorTotalDuration <= 0 || transcriptWords.length === 0) return;
+
+  document.getElementById('tl-start').textContent = '0:00';
+  document.getElementById('tl-end').textContent = formatTime(editorTotalDuration);
+
+  const dur = editorTotalDuration;
+
+  // Draw all segments on source timeline
+  // First, compute kept ranges
+  const keptRanges = getKeptSegments();
+  const keptSet = new Set();
+  for (const r of keptRanges) {
+    keptSet.add(`${r.start}-${r.end}`);
+  }
+
+  // Draw kept clips (green)
+  for (const seg of keptRanges) {
+    const el = document.createElement('div');
+    el.className = 'tl-clip kept';
+    el.style.left = ((seg.start / dur) * 100) + '%';
+    el.style.width = (((seg.end - seg.start) / dur) * 100) + '%';
+    el.title = `${formatTime(seg.start)} — ${formatTime(seg.end)}`;
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      editorVideo.currentTime = seg.start;
+    });
+    timeline.appendChild(el);
+  }
+
+  // Draw cut regions (red, faint)
+  let cursor = 0;
+  for (const seg of keptRanges) {
+    if (seg.start > cursor) {
+      const el = document.createElement('div');
+      el.className = 'tl-clip cut-region';
+      el.style.left = ((cursor / dur) * 100) + '%';
+      el.style.width = (((seg.start - cursor) / dur) * 100) + '%';
+      timeline.appendChild(el);
+    }
+    cursor = seg.end;
+  }
+  if (cursor < dur) {
+    const el = document.createElement('div');
+    el.className = 'tl-clip cut-region';
+    el.style.left = ((cursor / dur) * 100) + '%';
+    el.style.width = (((dur - cursor) / dur) * 100) + '%';
+    timeline.appendChild(el);
+  }
+
+  // Info text
+  const keptDur = keptRanges.reduce((s, r) => s + (r.end - r.start), 0);
+  tlInfo.textContent = `${keptRanges.length} clips, ${formatTime(keptDur)} kept`;
+}
+
+// Click timeline to seek
+timeline.addEventListener('click', (e) => {
+  if (editorTotalDuration <= 0) return;
+  const rect = timeline.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const pct = x / rect.width;
+  editorVideo.currentTime = pct * editorTotalDuration;
+});
+
+// ---- Clip Order (reorderable pills) ----
+function updateClipOrder() {
+  const segs = getKeptSegments();
+  // Preserve existing order where possible, add new, remove gone
+  const newIds = new Set(segs.map(s => `${s.start.toFixed(4)}-${s.end.toFixed(4)}`));
+  const oldIds = new Set(clipOrder.map(c => c.id));
+
+  // Remove clips that no longer exist
+  clipOrder = clipOrder.filter(c => newIds.has(c.id));
+
+  // Add new clips in their natural position
+  for (const seg of segs) {
+    const id = `${seg.start.toFixed(4)}-${seg.end.toFixed(4)}`;
+    if (!oldIds.has(id)) {
+      // Insert in chronological position
+      let insertAt = clipOrder.length;
+      for (let i = 0; i < clipOrder.length; i++) {
+        if (clipOrder[i].start > seg.start) { insertAt = i; break; }
+      }
+      clipOrder.splice(insertAt, 0, { start: seg.start, end: seg.end, id });
+    }
+  }
+}
+
+let dragClipIdx = null;
+
+function moveClip(fromIdx, toIdx) {
+  if (fromIdx === toIdx || toIdx < 0 || toIdx >= clipOrder.length) return;
+  undoStack.push({ action: 'reorder', previousOrder: clipOrder.map(c => ({...c})) });
+  undoBtn.disabled = false;
+  const moved = clipOrder.splice(fromIdx, 1)[0];
+  clipOrder.splice(toIdx, 0, moved);
+  renderClipPills();
+  updateExportSummary();
+}
+
+function renderClipPills() {
+  clipOrderEl.innerHTML = '';
+  if (clipOrder.length === 0) return;
+
+  clipOrder.forEach((clip, i) => {
+    const pill = document.createElement('div');
+    pill.className = 'clip-pill';
+    pill.draggable = true;
+
+    const dur = clip.end - clip.start;
+    const label = document.createElement('span');
+    label.textContent = `${i + 1}. ${formatTime(clip.start)} — ${formatTime(clip.end)} (${formatTime(dur)})`;
+    label.style.cursor = 'pointer';
+    label.addEventListener('click', () => {
+      editorVideo.currentTime = clip.start;
+    });
+    pill.appendChild(label);
+
+    // Arrow buttons
+    const arrows = document.createElement('span');
+    arrows.className = 'pill-arrows';
+
+    const upBtn = document.createElement('button');
+    upBtn.className = 'pill-arrow';
+    upBtn.textContent = '\u25B2';
+    upBtn.title = 'Move left';
+    upBtn.addEventListener('click', (e) => { e.stopPropagation(); moveClip(i, i - 1); });
+    if (i === 0) upBtn.style.visibility = 'hidden';
+
+    const downBtn = document.createElement('button');
+    downBtn.className = 'pill-arrow';
+    downBtn.textContent = '\u25BC';
+    downBtn.title = 'Move right';
+    downBtn.addEventListener('click', (e) => { e.stopPropagation(); moveClip(i, i + 1); });
+    if (i === clipOrder.length - 1) downBtn.style.visibility = 'hidden';
+
+    arrows.appendChild(upBtn);
+    arrows.appendChild(downBtn);
+    pill.appendChild(arrows);
+
+    // Drag and drop
+    pill.addEventListener('dragstart', (e) => {
+      dragClipIdx = i;
+      pill.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(i));
+    });
+    pill.addEventListener('dragend', () => {
+      pill.classList.remove('dragging');
+      dragClipIdx = null;
+    });
+    pill.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      pill.classList.add('drag-over');
+    });
+    pill.addEventListener('dragleave', () => pill.classList.remove('drag-over'));
+    pill.addEventListener('drop', (e) => {
+      e.preventDefault();
+      pill.classList.remove('drag-over');
+      if (dragClipIdx === null || dragClipIdx === i) return;
+      moveClip(dragClipIdx, i);
+    });
+
+    clipOrderEl.appendChild(pill);
+  });
+}
+
+// ---- Duplicate Takes (with sync) ----
+async function findDuplicates() {
+  if (transcriptSegments.length === 0) return;
+
+  duplicatesSection.classList.remove('hidden');
+  duplicatesList.innerHTML = '<span class="spinner"></span> Analyzing...';
+
+  try {
+    const resp = await fetch('/api/find-duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ segments: transcriptSegments })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error);
+
+    duplicateGroups = data.groups;
+    renderDuplicates();
+  } catch (err) {
+    duplicatesList.innerHTML = `<span class="error">Failed: ${err.message}</span>`;
+  }
+}
+
+function renderDuplicates() {
+  duplicatesList.innerHTML = '';
+
+  if (duplicateGroups.length === 0) {
+    noDuplicates.classList.remove('hidden');
+    return;
+  }
+  noDuplicates.classList.add('hidden');
+
+  for (const group of duplicateGroups) {
+    const div = document.createElement('div');
+    div.className = 'dup-group';
+    div.innerHTML = `<div class="dup-label">Possible duplicate (${group.takes.length} takes)</div>`;
+
+    for (const take of group.takes) {
+      const takeDiv = document.createElement('div');
+      takeDiv.className = 'dup-take';
+      take._el = takeDiv;
+
+      // Check if this take's words are all cut
+      const isCut = isTakeCut(take);
+      const sim = take.similarity ? `${Math.round(take.similarity * 100)}%` : 'original';
+
+      takeDiv.innerHTML = `
+        <span class="take-time">${formatTime(take.start)}</span>
+        <span class="take-text" style="${isCut ? 'text-decoration:line-through;opacity:0.4' : ''}">"${take.text}"</span>
+        <span class="take-sim">${sim}</span>
+        <button class="btn ${isCut ? 'btn-primary' : 'btn-action'} btn-sm keep-take-btn">${isCut ? 'Restore' : 'Keep'}</button>
+      `;
+
+      takeDiv.querySelector('.take-text').addEventListener('click', () => {
+        editorVideo.currentTime = take.start;
+        editorVideo.play();
+      });
+
+      takeDiv.querySelector('.keep-take-btn').addEventListener('click', () => {
+        if (isTakeCut(take)) {
+          // Restore this take
+          const indices = getWordIndicesForTake(take);
+          restoreWordIndices(indices);
+        } else {
+          keepTake(group, take);
+        }
+      });
+
+      div.appendChild(takeDiv);
+    }
+
+    const compareBtn = document.createElement('button');
+    compareBtn.className = 'btn btn-primary btn-sm';
+    compareBtn.style.marginTop = '8px';
+    compareBtn.textContent = 'Compare takes';
+    compareBtn.addEventListener('click', () => compareTakes(group.takes));
+    div.appendChild(compareBtn);
+
+    duplicatesList.appendChild(div);
+  }
+}
+
+function isTakeCut(take) {
+  const indices = getWordIndicesForTake(take);
+  return indices.length > 0 && indices.every(i => transcriptWords[i].cut);
+}
+
+function getWordIndicesForTake(take) {
+  const indices = [];
+  for (let i = 0; i < transcriptWords.length; i++) {
+    const w = transcriptWords[i];
+    if (w.start >= take.start - 0.05 && w.end <= take.end + 0.05) {
+      indices.push(i);
+    }
+  }
+  return indices;
+}
+
+function updateDuplicateStyles() {
+  // Re-render duplicate panel to reflect current cut state
+  if (duplicateGroups.length > 0) renderDuplicates();
+}
+
+function keepTake(group, keptTake) {
+  for (const take of group.takes) {
+    if (take === keptTake) {
+      restoreWordIndices(getWordIndicesForTake(take));
+    } else {
+      cutWordIndices(getWordIndicesForTake(take));
+    }
+  }
+}
+
+function compareTakes(takes) {
+  if (takes.length < 2) return;
+  const t1 = takes[0];
+  editorVideo.currentTime = t1.start;
+  editorVideo.play();
+
+  const checkTime = () => {
+    if (editorVideo.currentTime >= t1.end - 0.1) {
+      editorVideo.removeEventListener('timeupdate', checkTime);
+      const t2 = takes[1];
+      editorVideo.currentTime = t2.start;
+      const checkEnd = () => {
+        if (editorVideo.currentTime >= t2.end - 0.1) {
+          editorVideo.pause();
+          editorVideo.removeEventListener('timeupdate', checkEnd);
+        }
+      };
+      editorVideo.addEventListener('timeupdate', checkEnd);
+    }
+  };
+  editorVideo.addEventListener('timeupdate', checkTime);
+}
+
+// ---- Export ----
+function updateExportSummary() {
+  const kept = transcriptWords.filter(w => !w.cut);
+  const cut = transcriptWords.filter(w => w.cut);
+
+  if (kept.length === 0) {
+    exportSummary.innerHTML = 'All words are cut. Nothing to export.';
+    exportBtn.disabled = true;
+    return;
+  }
+
+  const keptDuration = clipOrder.reduce((sum, c) => sum + (c.end - c.start), 0);
+  const isReordered = isClipOrderChanged();
+
+  exportSummary.innerHTML = `Keeping <strong>${kept.length}</strong> of ${transcriptWords.length} words. ` +
+    `<strong>${cut.length}</strong> words cut. ` +
+    `Output: ~<strong>${formatTime(keptDuration)}</strong>` +
+    (isReordered ? ' <strong>(reordered)</strong>' : '');
+  exportBtn.disabled = false;
+}
+
+function isClipOrderChanged() {
+  for (let i = 1; i < clipOrder.length; i++) {
+    if (clipOrder[i].start < clipOrder[i - 1].start) return true;
+  }
+  return false;
+}
+
+function getKeptSegments() {
+  const segments = [];
+  let seg = null;
+  for (const w of transcriptWords) {
+    if (w.cut) {
+      if (seg) { segments.push(seg); seg = null; }
+      continue;
+    }
+    if (seg && (w.start - seg.end) < 0.15) {
+      seg.end = w.end;
+    } else {
+      if (seg) segments.push(seg);
+      seg = { start: w.start, end: w.end };
+    }
+  }
+  if (seg) segments.push(seg);
+  return segments;
+}
+
+exportBtn.addEventListener('click', runExport);
+
+async function runExport() {
+  // Use clipOrder for export (supports reordering)
+  const segments = clipOrder.length > 0 ? clipOrder : getKeptSegments();
+  if (segments.length === 0) return;
+
+  exportBtn.innerHTML = '<span class="spinner"></span> Exporting...';
+  exportBtn.disabled = true;
+  exportError.classList.add('hidden');
+  exportStatus.classList.remove('hidden');
+  const stopPolling = trackProgress(exportStatus, 'FFmpeg is cutting and re-encoding...');
+
+  try {
+    const resp = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ segments })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error);
+
+    const a = document.createElement('a');
+    a.href = data.downloadUrl;
+    a.download = 'edited_video.mp4';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    const sizeMB = (data.size / 1024 / 1024).toFixed(1);
+    stopPolling();
+    exportStatus.textContent = `Done! Downloaded (${sizeMB} MB).`;
+  } catch (err) {
+    stopPolling();
+    exportError.textContent = `Export failed: ${err.message}`;
+    exportError.classList.remove('hidden');
+    exportStatus.classList.add('hidden');
+  } finally {
+    exportBtn.innerHTML = 'Export Edited Video';
+    exportBtn.disabled = false;
+  }
+}
+
+// ============================================================
+//  TAB 3: CAPTIONS
+// ============================================================
+const captionDropZone = document.getElementById('caption-drop-zone');
+const captionFileInput = document.getElementById('caption-file-input');
+const captionFileInfo = document.getElementById('caption-file-info');
+const captionUploadError = document.getElementById('caption-upload-error');
+const captionUseCurrent = document.getElementById('caption-use-current');
+const captionUseCurrentBtn = document.getElementById('caption-use-current-btn');
+const captionTranscribeActions = document.getElementById('caption-transcribe-actions');
+const captionTranscribeBtn = document.getElementById('caption-transcribe-btn');
+const captionTranscribeError = document.getElementById('caption-transcribe-error');
+const captionWorkspace = document.getElementById('caption-workspace');
+const captionStage = document.getElementById('caption-stage');
+const captionVideo = document.getElementById('caption-video');
+const captionOverlay = document.getElementById('caption-overlay');
+const captionVideoTime = document.getElementById('caption-video-time');
+const captionCueList = document.getElementById('caption-cue-list');
+const captionPresetGrid = document.getElementById('caption-preset-grid');
+const captionSavedPresets = document.getElementById('caption-saved-presets');
+const captionPresetName = document.getElementById('caption-preset-name');
+const captionSavePresetBtn = document.getElementById('caption-save-preset-btn');
+const captionRenderSection = document.getElementById('caption-render-section');
+const captionRenderSummary = document.getElementById('caption-render-summary');
+const captionRenderBtn = document.getElementById('caption-render-btn');
+const captionRenderStatus = document.getElementById('caption-render-status');
+const captionRenderError = document.getElementById('caption-render-error');
+
+const captionInputs = {
+  size: document.getElementById('caption-size'),
+  x: document.getElementById('caption-x'),
+  y: document.getElementById('caption-y'),
+  maxWords: document.getElementById('caption-words'),
+  maxChars: document.getElementById('caption-line'),
+  fontFamily: document.getElementById('caption-font'),
+  uppercase: document.getElementById('caption-uppercase'),
+  singleLine: document.getElementById('caption-single-line'),
+  smartSplitting: document.getElementById('caption-smart-split'),
+  color: document.getElementById('caption-color'),
+  backgroundColor: document.getElementById('caption-bg-color'),
+  backgroundOpacity: document.getElementById('caption-bg-opacity'),
+  outlineWidth: document.getElementById('caption-outline'),
+  shadow: document.getElementById('caption-shadow')
+};
+
+const captionValueEls = {
+  size: document.getElementById('caption-size-val'),
+  x: document.getElementById('caption-x-val'),
+  y: document.getElementById('caption-y-val'),
+  maxWords: document.getElementById('caption-words-val'),
+  maxChars: document.getElementById('caption-line-val'),
+  color: document.getElementById('caption-color-val'),
+  backgroundColor: document.getElementById('caption-bg-val'),
+  backgroundOpacity: document.getElementById('caption-bg-opacity-val'),
+  outlineWidth: document.getElementById('caption-outline-val'),
+  shadow: document.getElementById('caption-shadow-val')
+};
+
+const CAPTION_PRESET_KEY = 'vidEdit.captionPresets.v1';
+const defaultCaptionStyle = {
+  fontFamily: 'Arial',
+  size: 6.2,
+  x: 50,
+  y: 82,
+  maxWords: 7,
+  maxChars: 30,
+  color: '#fff8d7',
+  backgroundColor: '#000000',
+  backgroundOpacity: 0.38,
+  outlineColor: '#000000',
+  outlineWidth: 3,
+  shadow: 2,
+  bold: true,
+  uppercase: true,
+  singleLine: false,
+  smartSplitting: true,
+  textAlign: 'center'
+};
+
+const captionExamplePresets = [
+  {
+    id: 'flova-movie',
+    name: 'Flova Movie',
+    detail: 'Warm cinema captions with a low-center placement.',
+    style: { ...defaultCaptionStyle, size: 6.4, y: 81, color: '#fff0a8', backgroundOpacity: 0.18, outlineWidth: 5, shadow: 2.5, maxWords: 6, maxChars: 28 }
+  },
+  {
+    id: 'creator-bold',
+    name: 'Creator Bold',
+    detail: 'Large social captions for fast edits.',
+    style: { ...defaultCaptionStyle, fontFamily: 'Impact', size: 7.4, y: 74, color: '#ffffff', backgroundOpacity: 0, outlineWidth: 6, shadow: 3, maxWords: 4, maxChars: 22 }
+  },
+  {
+    id: 'clean-lower',
+    name: 'Clean Lower',
+    detail: 'Readable subtitles with a restrained black plate.',
+    style: { ...defaultCaptionStyle, size: 5.1, y: 86, color: '#f2f7ff', backgroundOpacity: 0.55, outlineWidth: 1.5, shadow: 0.5, uppercase: false, maxWords: 9, maxChars: 38 }
+  },
+  {
+    id: 'documentary',
+    name: 'Documentary',
+    detail: 'Smaller mixed-case captions near the safe lower third.',
+    style: { ...defaultCaptionStyle, fontFamily: 'Helvetica', size: 4.6, y: 88, color: '#f5efe2', backgroundOpacity: 0.32, outlineWidth: 2, shadow: 1, uppercase: false, maxWords: 10, maxChars: 42 }
+  },
+  {
+    id: 'neon-pop',
+    name: 'Neon Pop',
+    detail: 'High contrast yellow text with a punched outline.',
+    style: { ...defaultCaptionStyle, size: 6.8, y: 78, color: '#d7ff46', backgroundOpacity: 0, outlineWidth: 7, shadow: 4, maxWords: 5, maxChars: 24 }
+  },
+  {
+    id: 'top-note',
+    name: 'Top Note',
+    detail: 'Upper-frame captions for videos with lower-screen action.',
+    style: { ...defaultCaptionStyle, size: 5.4, y: 18, color: '#ffffff', backgroundOpacity: 0.42, outlineWidth: 2, shadow: 1, uppercase: false, maxWords: 8, maxChars: 34 }
+  }
+];
+
+let captionFileReady = false;
+let captionTotalDuration = 0;
+let captionWords = [];
+let captionCues = [];
+let captionStyle = { ...defaultCaptionStyle };
+let activeCaptionPresetId = 'flova-movie';
+
+const captionStructureControlIds = new Set([
+  'caption-words',
+  'caption-line',
+  'caption-single-line',
+  'caption-smart-split'
+]);
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function hexToRgb(hex) {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+  if (!match) return { r: 255, g: 255, b: 255 };
+  return {
+    r: parseInt(match[1], 16),
+    g: parseInt(match[2], 16),
+    b: parseInt(match[3], 16)
+  };
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function videoUrl() {
+  return `/api/video?t=${Date.now()}`;
+}
+
+const weakCaptionEndWords = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by',
+  'do', 'does', 'for', 'from', 'had', 'has', 'have', 'if', 'in', 'into',
+  'is', 'like', 'of', 'on', 'or', 'so', 'than', 'that', 'the', 'then',
+  'this', 'to', 'was', 'were', 'when', 'while', 'with'
+]);
+const phraseStartWords = new Set([
+  'and', 'but', 'so', 'then', 'because', 'which', 'who', 'where', 'when',
+  'while', 'if', 'or'
+]);
+
+function plainCaptionWord(value) {
+  return String(value || '').toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '');
+}
+
+function wordsToCaptionText(words) {
+  return words.map(w => typeof w === 'string' ? w : w.word).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function endsWithWeakWord(words) {
+  if (!words.length) return false;
+  return weakCaptionEndWords.has(plainCaptionWord(words[words.length - 1].word || words[words.length - 1]));
+}
+
+function wordHasTerminalPunctuation(word) {
+  return /[.!?;:]$/.test(String(word.word || word));
+}
+
+captionDropZone.addEventListener('click', () => captionFileInput.click());
+captionDropZone.addEventListener('dragover', e => { e.preventDefault(); captionDropZone.classList.add('dragover'); });
+captionDropZone.addEventListener('dragleave', () => captionDropZone.classList.remove('dragover'));
+captionDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  captionDropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleCaptionFile(e.dataTransfer.files[0]);
+});
+captionFileInput.addEventListener('change', () => { if (captionFileInput.files.length) handleCaptionFile(captionFileInput.files[0]); });
+
+async function handleCaptionFile(file) {
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+  captionFileInfo.style.display = 'block';
+  captionFileInfo.innerHTML = `<span class="spinner"></span> Uploading ${file.name} (${sizeMB} MB)...`;
+  captionUploadError.classList.add('hidden');
+  captionTranscribeError.classList.add('hidden');
+  captionFileReady = false;
+  captionWorkspace.classList.add('hidden');
+  captionRenderSection.classList.add('hidden');
+
+  try {
+    const data = await uploadFileToServer(file);
+    if (!data.ok) throw new Error(data.error);
+    captionFileReady = true;
+    captionTotalDuration = data.duration;
+    sharedFileUploaded = true;
+    sharedVideoDuration = data.duration;
+    sharedVideoName = file.name;
+    captionFileInfo.innerHTML = `${file.name} - ${sizeMB} MB - ${formatTime(data.duration)}`;
+    captionTranscribeActions.style.display = '';
+    captionVideo.src = videoUrl();
+  } catch (err) {
+    captionFileInfo.innerHTML = `${file.name} - ${sizeMB} MB`;
+    captionUploadError.textContent = `Upload failed: ${err.message}`;
+    captionUploadError.classList.remove('hidden');
+  }
+}
+
+captionUseCurrentBtn.addEventListener('click', () => {
+  if (!sharedFileUploaded) return;
+  captionFileReady = true;
+  captionTotalDuration = sharedVideoDuration || totalDuration || editorTotalDuration;
+  captionFileInfo.style.display = 'block';
+  captionFileInfo.innerHTML = sharedVideoName ? `Using ${sharedVideoName}` : 'Using current uploaded video';
+  captionTranscribeActions.style.display = '';
+  captionTranscribeBtn.disabled = false;
+  captionVideo.src = videoUrl();
+});
+
+captionTranscribeBtn.addEventListener('click', runCaptionTranscribe);
+
+async function runCaptionTranscribe() {
+  if (!captionFileReady) return;
+
+  captionTranscribeBtn.innerHTML = '<span class="spinner"></span> Transcribing...';
+  captionTranscribeBtn.disabled = true;
+  captionTranscribeError.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/transcribe', { method: 'POST' });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error);
+    if (!data.words || data.words.length === 0) throw new Error('No word timings returned');
+
+    captionWords = data.words.map(w => ({
+      word: String(w.word || '').trim(),
+      start: Number(w.start),
+      end: Number(w.end)
+    })).filter(w => w.word && Number.isFinite(w.start) && Number.isFinite(w.end));
+
+    captionVideo.src = videoUrl();
+    captionWorkspace.classList.remove('hidden');
+    captionRenderSection.classList.remove('hidden');
+    buildCaptionCues();
+    updateCaptionUI();
+  } catch (err) {
+    captionTranscribeError.textContent = `Transcription failed: ${err.message}`;
+    captionTranscribeError.classList.remove('hidden');
+  } finally {
+    captionTranscribeBtn.innerHTML = 'Transcribe for Captions';
+    captionTranscribeBtn.disabled = false;
+  }
+}
+
+function wrapCaptionText(text, maxChars) {
+  if (captionStyle.singleLine) return text.replace(/\s+/g, ' ').trim();
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (captionStyle.smartSplitting) return smartWrapCaptionWords(words, maxChars);
+
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxChars && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.join('\n');
+}
+
+function smartWrapCaptionWords(words, maxChars) {
+  const lines = [];
+  let remaining = [...words];
+
+  while (remaining.length > 0 && wordsToCaptionText(remaining).length > maxChars) {
+    const splitAt = findSmartLineBreak(remaining, maxChars);
+    if (splitAt <= 0 || splitAt >= remaining.length) break;
+    lines.push(wordsToCaptionText(remaining.slice(0, splitAt)));
+    remaining = remaining.slice(splitAt);
+  }
+
+  if (remaining.length) lines.push(wordsToCaptionText(remaining));
+  return lines.join('\n');
+}
+
+function findSmartLineBreak(words, maxChars) {
+  if (words.length <= 1) return words.length;
+
+  let bestIndex = 1;
+  let bestScore = -Infinity;
+  const totalChars = wordsToCaptionText(words).length;
+  const targetChars = Math.min(maxChars, Math.ceil(totalChars / 2));
+
+  for (let i = 1; i < words.length; i++) {
+    const left = words.slice(0, i);
+    const right = words.slice(i);
+    const leftChars = wordsToCaptionText(left).length;
+    if (leftChars > maxChars + 8) continue;
+
+    let score = -Math.abs(leftChars - targetChars);
+    if (leftChars <= maxChars) score += 4;
+    if (wordHasTerminalPunctuation(left[left.length - 1])) score += 8;
+    if (phraseStartWords.has(plainCaptionWord(right[0]))) score += 5;
+    if (endsWithWeakWord(left)) score -= 16;
+    if (right.length === 1 && !wordHasTerminalPunctuation(right[0])) score -= 5;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  return bestIndex;
+}
+
+function buildCaptionCues() {
+  captionCues = [];
+  if (captionWords.length === 0) return;
+
+  const maxWords = Math.round(captionStyle.maxWords);
+  const maxChars = Math.round(captionStyle.maxChars);
+  if (captionStyle.smartSplitting) {
+    captionCues = buildSmartCaptionCueGroups(maxWords, maxChars).map(words => ({
+      start: words[0].start,
+      end: Math.max(words[words.length - 1].end + 0.08, words[0].start + 0.25),
+      text: wrapCaptionText(wordsToCaptionText(words), maxChars)
+    }));
+    preventCaptionCueOverlaps(captionCues);
+    return;
+  }
+
+  let group = [];
+
+  function pushGroup() {
+    if (group.length === 0) return;
+    const text = group.map(w => w.word).join(' ');
+    captionCues.push({
+      start: group[0].start,
+      end: Math.max(group[group.length - 1].end + 0.08, group[0].start + 0.25),
+      text: wrapCaptionText(text, maxChars)
+    });
+    group = [];
+  }
+
+  for (let i = 0; i < captionWords.length; i++) {
+    const word = captionWords[i];
+    const next = captionWords[i + 1];
+    group.push(word);
+
+    const groupText = group.map(w => w.word).join(' ');
+    const endsSentence = /[.!?]$/.test(word.word);
+    const longGap = next ? (next.start - word.end) > 0.7 : true;
+    const isFull = group.length >= maxWords || groupText.length >= maxChars * 2;
+
+    if (endsSentence || longGap || isFull || !next) {
+      pushGroup();
+    }
+  }
+  preventCaptionCueOverlaps(captionCues);
+}
+
+function preventCaptionCueOverlaps(cues) {
+  const gap = 0;
+  cues.sort((a, b) => a.start - b.start);
+
+  for (let i = 0; i < cues.length - 1; i++) {
+    const current = cues[i];
+    const next = cues[i + 1];
+    const latestEnd = Math.max(current.start, next.start - gap);
+    if (current.end > latestEnd) current.end = latestEnd;
+  }
+
+  for (let i = 0; i < cues.length; i++) {
+    const minEnd = cues[i].start + 0.02;
+    if (i === cues.length - 1 && cues[i].end < minEnd) cues[i].end = minEnd;
+    if (i < cues.length - 1 && cues[i].end < cues[i].start) cues[i].end = cues[i].start;
+  }
+}
+
+function buildSmartCaptionCueGroups(maxWords, maxChars) {
+  const cueGroups = [];
+  let group = [];
+  const maxTextChars = maxChars * 2;
+
+  function pushWords(words) {
+    if (words.length) cueGroups.push(words);
+  }
+
+  function flushGroup() {
+    if (!group.length) return;
+    pushWords(group);
+    group = [];
+  }
+
+  for (let i = 0; i < captionWords.length; i++) {
+    const word = captionWords[i];
+    const next = captionWords[i + 1];
+    group.push(word);
+
+    const groupText = wordsToCaptionText(group);
+    const endsSentence = wordHasTerminalPunctuation(word);
+    const longGap = next ? (next.start - word.end) > 0.65 : true;
+    const isOverTarget = group.length >= maxWords || groupText.length >= maxTextChars;
+
+    if (endsSentence || longGap || !next) {
+      flushGroup();
+      continue;
+    }
+
+    if (isOverTarget) {
+      const splitAt = findSmartCueBreak(group, maxWords, maxTextChars);
+      pushWords(group.slice(0, splitAt));
+      group = group.slice(splitAt);
+    }
+  }
+
+  flushGroup();
+  return rebalanceCaptionCueGroups(cueGroups);
+}
+
+function findSmartCueBreak(words, maxWords, maxTextChars) {
+  if (words.length <= 2) return words.length;
+
+  let bestIndex = Math.min(words.length, maxWords);
+  let bestScore = -Infinity;
+  const targetWords = Math.max(2, Math.round(maxWords * 0.82));
+  const targetChars = Math.round(maxTextChars * 0.72);
+
+  for (let i = 2; i <= words.length; i++) {
+    const left = words.slice(0, i);
+    const right = words.slice(i);
+    const leftChars = wordsToCaptionText(left).length;
+    if (leftChars > maxTextChars + 10) continue;
+
+    let score = -Math.abs(i - targetWords) * 4 - Math.abs(leftChars - targetChars) * 0.18;
+    if (i <= maxWords) score += 5;
+    if (wordHasTerminalPunctuation(left[left.length - 1])) score += 10;
+    if (right.length && phraseStartWords.has(plainCaptionWord(right[0]))) score += 8;
+    if (endsWithWeakWord(left)) score -= 22;
+    if (right.length === 1 && !wordHasTerminalPunctuation(right[0])) score -= 4;
+    if (i === words.length && endsWithWeakWord(left)) score -= 10;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  return Math.max(1, Math.min(bestIndex, words.length));
+}
+
+function rebalanceCaptionCueGroups(groups) {
+  const balanced = groups.map(group => [...group]).filter(group => group.length);
+
+  for (let i = 0; i < balanced.length - 1; i++) {
+    while (balanced[i].length > 2 && endsWithWeakWord(balanced[i])) {
+      balanced[i + 1].unshift(balanced[i].pop());
+    }
+  }
+
+  return balanced.filter(group => group.length);
+}
+
+function captionTextForOutput(text) {
+  const value = captionStyle.singleLine
+    ? String(text).replace(/\s+/g, ' ').trim()
+    : String(text);
+  return captionStyle.uppercase ? value.toUpperCase() : value;
+}
+
+function renderedCaptionText(text) {
+  return captionTextForOutput(text);
+}
+
+function cueForTime(time) {
+  return captionCues.find(cue => time >= cue.start && time < cue.end);
+}
+
+function updateCaptionOverlayText() {
+  const currentCue = cueForTime(captionVideo.currentTime || 0);
+  const fallbackCue = captionCues[0];
+  captionOverlay.textContent = renderedCaptionText((currentCue || fallbackCue || { text: 'Caption preview' }).text);
+}
+
+function updateCaptionCueList() {
+  if (captionCues.length === 0) {
+    captionCueList.innerHTML = '<div class="caption-empty">Transcribe a video to build caption cues.</div>';
+    return;
+  }
+
+  captionCueList.innerHTML = captionCues.map((cue, index) => `
+    <div class="caption-cue" data-index="${index}">
+      <time>${formatTime(cue.start)}</time>
+      <textarea data-index="${index}" spellcheck="true">${escapeHtml(cue.text)}</textarea>
+    </div>
+  `).join('');
+}
+
+function readCaptionControls() {
+  captionStyle = {
+    ...captionStyle,
+    size: parseFloat(captionInputs.size.value),
+    x: parseFloat(captionInputs.x.value),
+    y: parseFloat(captionInputs.y.value),
+    maxWords: parseInt(captionInputs.maxWords.value, 10),
+    maxChars: parseInt(captionInputs.maxChars.value, 10),
+    fontFamily: captionInputs.fontFamily.value,
+    uppercase: captionInputs.uppercase.checked,
+    singleLine: captionInputs.singleLine.checked,
+    smartSplitting: captionInputs.smartSplitting.checked,
+    color: captionInputs.color.value,
+    backgroundColor: captionInputs.backgroundColor.value,
+    backgroundOpacity: parseInt(captionInputs.backgroundOpacity.value, 10) / 100,
+    outlineWidth: parseFloat(captionInputs.outlineWidth.value),
+    shadow: parseFloat(captionInputs.shadow.value)
+  };
+}
+
+function syncCaptionControls() {
+  captionInputs.size.value = captionStyle.size;
+  captionInputs.x.value = captionStyle.x;
+  captionInputs.y.value = captionStyle.y;
+  captionInputs.maxWords.value = captionStyle.maxWords;
+  captionInputs.maxChars.value = captionStyle.maxChars;
+  captionInputs.fontFamily.value = captionStyle.fontFamily;
+  captionInputs.uppercase.checked = captionStyle.uppercase;
+  captionInputs.singleLine.checked = captionStyle.singleLine;
+  captionInputs.smartSplitting.checked = captionStyle.smartSplitting;
+  captionInputs.color.value = captionStyle.color;
+  captionInputs.backgroundColor.value = captionStyle.backgroundColor;
+  captionInputs.backgroundOpacity.value = Math.round(captionStyle.backgroundOpacity * 100);
+  captionInputs.outlineWidth.value = captionStyle.outlineWidth;
+  captionInputs.shadow.value = captionStyle.shadow;
+
+  captionValueEls.size.textContent = `${Number(captionStyle.size).toFixed(1)}%`;
+  captionValueEls.x.textContent = `${Math.round(captionStyle.x)}%`;
+  captionValueEls.y.textContent = `${Math.round(captionStyle.y)}%`;
+  captionValueEls.maxWords.textContent = Math.round(captionStyle.maxWords);
+  captionValueEls.maxChars.textContent = Math.round(captionStyle.maxChars);
+  captionValueEls.color.textContent = captionStyle.color;
+  captionValueEls.backgroundColor.textContent = captionStyle.backgroundColor;
+  captionValueEls.backgroundOpacity.textContent = `${Math.round(captionStyle.backgroundOpacity * 100)}%`;
+  captionValueEls.outlineWidth.textContent = captionStyle.outlineWidth;
+  captionValueEls.shadow.textContent = captionStyle.shadow;
+}
+
+function applyCaptionStyleToOverlay() {
+  const stageHeight = captionStage.getBoundingClientRect().height || 420;
+  const rgb = hexToRgb(captionStyle.backgroundColor);
+  const outline = captionStyle.outlineWidth;
+  const shadow = captionStyle.shadow;
+
+  captionOverlay.style.left = `${captionStyle.x}%`;
+  captionOverlay.style.top = `${captionStyle.y}%`;
+  captionOverlay.style.fontSize = `${Math.max(12, stageHeight * captionStyle.size / 100)}px`;
+  captionOverlay.style.fontFamily = `${captionStyle.fontFamily}, Arial, Helvetica, sans-serif`;
+  captionOverlay.style.color = captionStyle.color;
+  captionOverlay.style.background = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${captionStyle.backgroundOpacity})`;
+  captionOverlay.style.webkitTextStroke = outline > 0 ? `${outline * 0.25}px ${captionStyle.outlineColor}` : '0 transparent';
+  captionOverlay.style.textShadow = shadow > 0
+    ? `0 ${shadow}px ${shadow * 2}px rgba(0,0,0,0.85), 0 0 ${shadow * 3}px rgba(0,0,0,0.65)`
+    : 'none';
+  captionOverlay.style.fontWeight = captionStyle.bold ? '800' : '600';
+  captionOverlay.style.textAlign = captionStyle.textAlign;
+  captionOverlay.style.transform = captionStyle.textAlign === 'left'
+    ? 'translate(0, -50%)'
+    : captionStyle.textAlign === 'right'
+      ? 'translate(-100%, -50%)'
+      : 'translate(-50%, -50%)';
+}
+
+function updateCaptionRenderSummary() {
+  if (captionCues.length === 0) {
+    captionRenderSummary.innerHTML = 'No captions ready yet.';
+    captionRenderBtn.disabled = true;
+    return;
+  }
+
+  const duration = captionCues.reduce((sum, cue) => sum + Math.max(0, cue.end - cue.start), 0);
+  captionRenderSummary.innerHTML = `Ready to render <strong>${captionCues.length}</strong> caption cues across roughly <strong>${formatTime(duration)}</strong>.`;
+  captionRenderBtn.disabled = false;
+}
+
+function updateCaptionUI() {
+  syncCaptionControls();
+  applyCaptionStyleToOverlay();
+  updateCaptionOverlayText();
+  updateCaptionCueList();
+  updateCaptionRenderSummary();
+  renderCaptionPresetButtons();
+}
+
+captionCueList.addEventListener('input', e => {
+  const textarea = e.target.closest('textarea[data-index]');
+  if (!textarea) return;
+
+  const index = Number(textarea.dataset.index);
+  if (!Number.isInteger(index) || !captionCues[index]) return;
+
+  captionCues[index].text = textarea.value;
+  updateCaptionOverlayText();
+  updateCaptionRenderSummary();
+});
+
+function applyCaptionPreset(preset) {
+  captionStyle = { ...defaultCaptionStyle, ...preset.style };
+  activeCaptionPresetId = preset.id;
+  buildCaptionCues();
+  updateCaptionUI();
+}
+
+function renderPresetButton(container, preset) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'caption-preset' + (activeCaptionPresetId === preset.id ? ' active' : '');
+  button.innerHTML = `<strong>${escapeHtml(preset.name)}</strong><span>${escapeHtml(preset.detail || 'Saved preset')}</span>`;
+  button.addEventListener('click', () => applyCaptionPreset(preset));
+  container.appendChild(button);
+}
+
+function savedCaptionPresets() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CAPTION_PRESET_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeSavedCaptionPresets(presets) {
+  localStorage.setItem(CAPTION_PRESET_KEY, JSON.stringify(presets.slice(0, 24)));
+}
+
+function renderCaptionPresetButtons() {
+  captionPresetGrid.innerHTML = '';
+  for (const preset of captionExamplePresets) {
+    renderPresetButton(captionPresetGrid, preset);
+  }
+
+  captionSavedPresets.innerHTML = '';
+  const saved = savedCaptionPresets();
+  if (saved.length === 0) {
+    captionSavedPresets.innerHTML = '<div class="caption-empty">Saved caption presets will appear here.</div>';
+    return;
+  }
+  for (const preset of saved) {
+    renderPresetButton(captionSavedPresets, preset);
+  }
+}
+
+captionSavePresetBtn.addEventListener('click', () => {
+  const name = captionPresetName.value.trim() || `Caption Preset ${savedCaptionPresets().length + 1}`;
+  const preset = {
+    id: `saved-${Date.now()}`,
+    name,
+    detail: 'Saved locally',
+    style: { ...captionStyle }
+  };
+  const presets = [preset, ...savedCaptionPresets()];
+  writeSavedCaptionPresets(presets);
+  captionPresetName.value = '';
+  activeCaptionPresetId = preset.id;
+  renderCaptionPresetButtons();
+});
+
+Object.values(captionInputs).forEach(input => {
+  input.addEventListener('input', () => {
+    activeCaptionPresetId = null;
+    readCaptionControls();
+    if (captionStructureControlIds.has(input.id)) buildCaptionCues();
+    updateCaptionUI();
+  });
+  input.addEventListener('change', () => {
+    activeCaptionPresetId = null;
+    readCaptionControls();
+    if (captionStructureControlIds.has(input.id)) buildCaptionCues();
+    updateCaptionUI();
+  });
+});
+
+let captionDragActive = false;
+
+captionOverlay.addEventListener('pointerdown', e => {
+  captionDragActive = true;
+  captionOverlay.classList.add('dragging');
+  captionOverlay.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+captionOverlay.addEventListener('pointermove', e => {
+  if (!captionDragActive) return;
+  const rect = captionStage.getBoundingClientRect();
+  captionStyle.x = clampNumber(((e.clientX - rect.left) / rect.width) * 100, 0, 100);
+  captionStyle.y = clampNumber(((e.clientY - rect.top) / rect.height) * 100, 0, 100);
+  activeCaptionPresetId = null;
+  syncCaptionControls();
+  applyCaptionStyleToOverlay();
+});
+
+captionOverlay.addEventListener('pointerup', e => {
+  captionDragActive = false;
+  captionOverlay.classList.remove('dragging');
+  captionOverlay.releasePointerCapture(e.pointerId);
+  renderCaptionPresetButtons();
+});
+
+captionVideo.addEventListener('timeupdate', () => {
+  captionVideoTime.textContent = formatTime(captionVideo.currentTime || 0);
+  updateCaptionOverlayText();
+});
+captionVideo.addEventListener('loadedmetadata', () => {
+  captionTotalDuration = captionVideo.duration || captionTotalDuration;
+  applyCaptionStyleToOverlay();
+});
+window.addEventListener('resize', applyCaptionStyleToOverlay);
+
+captionRenderBtn.addEventListener('click', runCaptionRender);
+
+async function runCaptionRender() {
+  if (captionCues.length === 0) return;
+
+  captionRenderBtn.innerHTML = '<span class="spinner"></span> Rendering...';
+  captionRenderBtn.disabled = true;
+  captionRenderError.classList.add('hidden');
+  captionRenderStatus.classList.remove('hidden');
+  const stopPolling = trackProgress(captionRenderStatus, 'FFmpeg is burning captions into your video...');
+
+  try {
+    const resp = await fetch('/api/render-captions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cues: nonOverlappingCaptionCuesForRender(),
+        style: captionStyle
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error);
+
+    const a = document.createElement('a');
+    a.href = data.downloadUrl;
+    const baseName = (sharedVideoName || 'captioned_video').replace(/\.[^.]+$/, '');
+    a.download = `${baseName}_captioned.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    const sizeMB = (data.size / 1024 / 1024).toFixed(1);
+    stopPolling();
+    captionRenderStatus.textContent = `Done! Downloaded (${sizeMB} MB).`;
+  } catch (err) {
+    stopPolling();
+    captionRenderError.textContent = `Render failed: ${err.message}`;
+    captionRenderError.classList.remove('hidden');
+    captionRenderStatus.classList.add('hidden');
+  } finally {
+    captionRenderBtn.innerHTML = 'Render Captioned Video';
+    captionRenderBtn.disabled = false;
+  }
+}
+
+function nonOverlappingCaptionCuesForRender() {
+  const cues = captionCues.map(cue => ({ ...cue, text: captionTextForOutput(cue.text) }));
+  preventCaptionCueOverlaps(cues);
+  return cues;
+}
+
+applyCaptionPreset(captionExamplePresets[0]);
 </script>
 </body>
 </html>
