@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import speech_detect
 import calibration
+import render_cut
 
 # Load .env file if present
 env_path = Path(__file__).parent / ".env"
@@ -816,81 +817,27 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- Video Processing (trim+concat) ----
     def _build_and_run_concat(self, segments, outpath, fast=False):
-        """Shared FFmpeg trim+concat logic for process and export.
+        """Trim+concat via the chunked renderer (fast for many cuts, A/V-synced).
 
-        fast=True uses a quick encode (veryfast/crf20, ~30x realtime) for batch
-        auto passes; default is the higher-quality medium/crf16 master.
+        fast=True uses a quick encode (veryfast/crf20); default is the
+        higher-quality master (medium/crf18).
         """
         filepath = os.path.join(UPLOAD_DIR, "input.mp4")
         ffmpeg, _ffprobe = get_video_tools()
-        venc = (["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"] if fast
-                else ["-c:v", "libx264", "-preset", "medium", "-crf", "16"])
-
-        filter_parts = []
-        concat_inputs = ""
-        for i, seg in enumerate(segments):
-            s, e = seg["start"], seg["end"]
-            filter_parts.append(
-                f"[0:v]trim=start={s:.4f}:end={e:.4f},setpts=PTS-STARTPTS[v{i}]"
-            )
-            filter_parts.append(
-                f"[0:a]atrim=start={s:.4f}:end={e:.4f},asetpts=PTS-STARTPTS[a{i}]"
-            )
-            concat_inputs += f"[v{i}][a{i}]"
-
-        filter_parts.append(
-            f"{concat_inputs}concat=n={len(segments)}:v=1:a=1[outv][outa]"
-        )
-        filter_complex = ";".join(filter_parts)
-
-        total_duration = sum(max(0.0, s["end"] - s["start"]) for s in segments)
-
-        proc = subprocess.Popen(
-            [
-                ffmpeg, "-y", "-i", filepath,
-                "-filter_complex", filter_complex,
-                "-map", "[outv]", "-map", "[outa]",
-                *venc,
-                "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart",
-                "-progress", "pipe:1", "-nostats",
-                outpath
-            ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1
-        )
-
-        stderr_chunks = []
-        stderr_thread = threading.Thread(
-            target=lambda: stderr_chunks.append(proc.stderr.read()),
-            daemon=True,
-        )
-        stderr_thread.start()
-
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("out_time_ms="):
-                try:
-                    out_us = int(line.split("=", 1)[1])
-                    if total_duration > 0:
-                        pct = (out_us / 1_000_000.0) / total_duration * 100.0
-                        _set_progress(percent=min(99.0, max(0.0, pct)))
-                except ValueError:
-                    pass
-            elif line == "progress=end":
-                _set_progress(percent=99.0)
-
-        proc.wait()
-        stderr_thread.join(timeout=2)
-        stderr_text = "".join(stderr_chunks)
 
         class _Result:
             pass
         result = _Result()
-        result.returncode = proc.returncode
-        result.stderr = stderr_text
+        try:
+            def on_chunk(done, total):
+                _set_progress(percent=min(99.0, done / max(1, total) * 100.0))
+            render_cut.render_segments(ffmpeg, filepath, segments, outpath,
+                                       fast=fast, on_chunk=on_chunk)
+            result.returncode = 0
+            result.stderr = ""
+        except Exception as e:
+            result.returncode = 1
+            result.stderr = str(e)
         return result
 
     def _run_concat_job(self, segments, outpath, stage, download_url):

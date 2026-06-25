@@ -19,36 +19,10 @@ from pathlib import Path
 
 import speech_detect
 import calibration
-import server  # reuse transcribe_words_local + get_video_tools (importing does not start the server)
+import render_cut
+import server  # reuse get_video_tools/get_duration (importing does not start the server)
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
-
-
-def build_filtergraph(segments):
-    parts, concat = [], ""
-    for i, s in enumerate(segments):
-        a, b = s["start"], s["end"]
-        parts.append(f"[0:v]trim=start={a:.4f}:end={b:.4f},setpts=PTS-STARTPTS[v{i}]")
-        parts.append(f"[0:a]atrim=start={a:.4f}:end={b:.4f},asetpts=PTS-STARTPTS[a{i}]")
-        concat += f"[v{i}][a{i}]"
-    parts.append(f"{concat}concat=n={len(segments)}:v=1:a=1[outv][outa]")
-    return ";".join(parts)
-
-
-def render(src, segments, out_path, ffmpeg, high=False):
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    venc = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"] if high \
-        else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
-    cmd = [
-        ffmpeg, "-y", "-i", str(src),
-        "-filter_complex", build_filtergraph(segments),
-        "-map", "[outv]", "-map", "[outa]",
-        *venc, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-        str(out_path),
-    ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr[-600:])
 
 
 def process_file(path, channel, high=False):
@@ -65,7 +39,8 @@ def process_file(path, channel, high=False):
     kept = sum(s["end"] - s["start"] for s in keep)
     print(f"  {path.name}: {dur:.0f}s -> {kept:.0f}s kept ({len(cuts)} silent gaps removed)"
           + ("  [no clear silence -> kept whole]" if meta.get("fallbackKeptAll") else ""), flush=True)
-    render(path, keep, out, ffmpeg, high=high)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    render_cut.render_segments(ffmpeg, str(path), keep, out, fast=not high)
     print(f"    -> {out}", flush=True)
 
 
