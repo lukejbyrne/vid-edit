@@ -27,7 +27,7 @@ _LOCK = threading.Lock()
 CLAMPS = {
     "pre_pad": (0.0, 0.6),
     "post_pad": (0.0, 0.8),
-    "speech_margin_db": (3.0, 20.0),
+    "audible_margin_db": (2.0, 14.0),
     "min_cut_gap": (0.2, 2.0),
 }
 DAMPING = 0.5  # apply half of the observed correction, so we converge instead of oscillate
@@ -198,25 +198,24 @@ def _learn_locked(channel, proposed, corrected, duration, note):
                 ov["post_pad"] = round(new, 3)
                 changes.append(f"post_pad {eff['post_pad']:.2f}->{new:.2f}s (word tails)")
 
-    # Net the two sensitivity effects into a single margin adjustment so they
-    # don't clobber each other (false cuts lower the margin, false keeps raise it).
+    # Net the two effects into one silence-threshold adjustment so they don't
+    # clobber each other. A restored cut means I removed real audio -> raise the
+    # bar for "silent" so I cut less; a deleted keep means I left dead air -> lower
+    # the bar so I cut more.
     margin_delta = -1.0 * min(false_cuts, 3) + 0.7 * min(false_keeps, 3)
     if abs(margin_delta) >= 0.05:
-        new_m = _clamp("speech_margin_db", eff["speech_margin_db"] + margin_delta)
-        if abs(new_m - eff["speech_margin_db"]) >= 0.1:
-            ov["speech_margin_db"] = round(new_m, 2)
-            direction = "more sensitive" if margin_delta < 0 else "stricter"
+        new_m = _clamp("audible_margin_db", eff["audible_margin_db"] + margin_delta)
+        if abs(new_m - eff["audible_margin_db"]) >= 0.1:
+            ov["audible_margin_db"] = round(new_m, 2)
+            direction = "cut less" if margin_delta < 0 else "cut more"
             changes.append(
-                f"{direction}: margin {eff['speech_margin_db']:.1f}->{new_m:.1f}dB "
+                f"{direction}: silence threshold {eff['audible_margin_db']:.1f}->{new_m:.1f}dB "
                 f"({false_cuts} restored, {false_keeps} deleted)")
     if false_cuts:
         new_g = _clamp("min_cut_gap", eff["min_cut_gap"] + 0.05 * min(false_cuts, 3))
         if abs(new_g - eff["min_cut_gap"]) >= 0.01:
             ov["min_cut_gap"] = round(new_g, 3)
             changes.append(f"min_cut_gap ->{new_g:.2f}s")
-    if false_keeps and not eff.get("require_words", True):
-        ov["require_words"] = True
-        changes.append("require_words on")
 
     summary = {
         "when": datetime.now().isoformat(timespec="seconds"),

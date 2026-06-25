@@ -105,15 +105,15 @@
         <div class="legend">
           <span><i style="background:var(--keep);opacity:.35"></i>keep</span>
           <span><i style="background:var(--cut);opacity:.3"></i>cut</span>
-          <span><i style="background:var(--keep)"></i>voice-band energy</span>
-          <span><i style="background:var(--warn)"></i>cut threshold</span>
+          <span><i style="background:var(--keep)"></i>loudness</span>
+          <span><i style="background:var(--warn)"></i>silence line (cut only below)</span>
           <span><i style="background:var(--accent)"></i>words</span>
           <span style="margin-left:auto">scroll = zoom · shift+scroll = pan</span>
         </div>
 
         <div id="controls">
-          <div class="ctl"><label>Sensitivity <b><span id="v-margin"></span> dB</b> <span style="color:var(--dim)">(lower = cut less)</span></label>
-            <input type="range" id="s-margin" min="3" max="20" step="0.5"></div>
+          <div class="ctl"><label>Silence threshold <b><span id="v-margin"></span> dB</b> <span style="color:var(--dim)">(higher = cut more)</span></label>
+            <input type="range" id="s-margin" min="2" max="14" step="0.5"></div>
           <div class="ctl"><label>Lead-in pad <b><span id="v-pre"></span> s</b></label>
             <input type="range" id="s-pre" min="0" max="0.6" step="0.02"></div>
           <div class="ctl"><label>Tail pad <b><span id="v-post"></span> s</b></label>
@@ -252,14 +252,14 @@ function keepList() { return mergeAdjacent(S.segs).filter(s => s.keep).map(s => 
 
 /* ---------- re-tune (server, no whisper) ---------- */
 function syncSliders(p) {
-  $('#s-margin').value = p.speech_margin_db; $('#v-margin').textContent = (+p.speech_margin_db).toFixed(1);
+  $('#s-margin').value = p.audible_margin_db; $('#v-margin').textContent = (+p.audible_margin_db).toFixed(1);
   $('#s-pre').value = p.pre_pad; $('#v-pre').textContent = (+p.pre_pad).toFixed(2);
   $('#s-post').value = p.post_pad; $('#v-post').textContent = (+p.post_pad).toFixed(2);
   $('#s-gap').value = p.min_cut_gap; $('#v-gap').textContent = (+p.min_cut_gap).toFixed(2);
 }
 function sliderChanged() {
   S.params = {
-    speech_margin_db: +$('#s-margin').value, pre_pad: +$('#s-pre').value,
+    audible_margin_db: +$('#s-margin').value, pre_pad: +$('#s-pre').value,
     post_pad: +$('#s-post').value, min_cut_gap: +$('#s-gap').value,
   };
   $('#v-margin').textContent = S.params.speech_margin_db.toFixed(1);
@@ -338,8 +338,8 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  // voice-band energy (bottom lane) + threshold
-  const sdb = S.wave.speechDb, m = sdb.length;
+  // loudness (bottom lane) + the silence threshold (cut only happens below it)
+  const sdb = S.wave.fullDb || S.wave.speechDb, m = sdb.length;
   let lo = Infinity, hi = -Infinity;
   for (const v of sdb){ if(v>-200){ lo=Math.min(lo,v); hi=Math.max(hi,v);} }
   if (!isFinite(lo)) { lo = -80; hi = 0; }
