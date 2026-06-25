@@ -77,6 +77,7 @@
 <body>
   <div id="sidebar">
     <h1>Silence Review<small id="sub">speech-gated · learns per folder</small></h1>
+    <button class="primary" id="btn-auto-all" style="margin:10px;width:calc(100% - 20px)">⚡ Auto-process all</button>
     <div id="queue"></div>
   </div>
   <div id="main">
@@ -522,6 +523,30 @@ $('#btn-approve').onclick = async () => {
   if (next) setTimeout(()=>selectFile(next), 900);
 };
 $('#btn-skip').onclick = () => { const next = S.queue.find(q=>q.status!=='done' && q.path!==S.currentPath); if (next) selectFile(next); };
+
+/* ---------- auto-process all (no per-file review) ---------- */
+async function autoAll() {
+  const pending = S.queue.filter(q => q.status !== 'done');
+  if (!pending.length) { toast('All files already processed.'); return; }
+  $('#btn-auto-all').disabled = true;
+  let done = 0;
+  for (let i=0; i<pending.length; i++) {
+    const it = pending[i];
+    toast(`Auto-processing ${i+1}/${pending.length}: ${it.name}…`, 600000);
+    const load = await api('/api/load', { path: it.path });
+    if (!load.ok) continue;
+    const a = await api('/api/analyze', { channel: it.channel });
+    if (!a.ok || !(a.segments || []).length) continue;
+    const r = await api('/api/render', {
+      segments: a.segments, channel: it.channel, output: it.output,
+      name: it.name, fast: true, learn: false,
+    });
+    if (r.ok) { it.status = 'done'; renderQueue(); done++; }
+  }
+  $('#btn-auto-all').disabled = false;
+  toast(`Done — auto-processed ${done}/${pending.length}. Outputs are in each folder's no-silence/. Click any clip to review & fix it (that trains the profile).`, 10000);
+}
+$('#btn-auto-all').onclick = autoAll;
 
 /* ---------- ui helpers ---------- */
 function showOverlay(t){ $('#ovtext').textContent=t; $('#overlay').classList.add('show'); }

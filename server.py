@@ -688,7 +688,7 @@ class Handler(SimpleHTTPRequestHandler):
         _set_progress(active=True, percent=0, stage="rendering", error=None)
         try:
             tmp_out = os.path.join(UPLOAD_DIR, "render_tmp.mp4")
-            result = self._build_and_run_concat(segments, tmp_out)
+            result = self._build_and_run_concat(segments, tmp_out, fast=bool(body.get("fast")))
             if result.returncode != 0:
                 err = result.stderr[-500:]
                 _set_progress(error=err)
@@ -815,10 +815,16 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": str(e)}, 500)
 
     # ---- Video Processing (trim+concat) ----
-    def _build_and_run_concat(self, segments, outpath):
-        """Shared FFmpeg trim+concat logic for process and export."""
+    def _build_and_run_concat(self, segments, outpath, fast=False):
+        """Shared FFmpeg trim+concat logic for process and export.
+
+        fast=True uses a quick encode (veryfast/crf20, ~30x realtime) for batch
+        auto passes; default is the higher-quality medium/crf16 master.
+        """
         filepath = os.path.join(UPLOAD_DIR, "input.mp4")
         ffmpeg, _ffprobe = get_video_tools()
+        venc = (["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"] if fast
+                else ["-c:v", "libx264", "-preset", "medium", "-crf", "16"])
 
         filter_parts = []
         concat_inputs = ""
@@ -844,7 +850,7 @@ class Handler(SimpleHTTPRequestHandler):
                 ffmpeg, "-y", "-i", filepath,
                 "-filter_complex", filter_complex,
                 "-map", "[outv]", "-map", "[outa]",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "16",
+                *venc,
                 "-c:a", "aac", "-b:a", "192k",
                 "-movflags", "+faststart",
                 "-progress", "pipe:1", "-nostats",
