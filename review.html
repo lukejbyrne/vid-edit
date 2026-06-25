@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Silence Review — speech-gated</title>
+<style>
+  :root {
+    --bg: #14141f; --panel: #1b1b2e; --panel2: #232340; --line: #2e2e4d;
+    --text: #e8e8f0; --dim: #9a9ab5; --keep: #4ecca3; --cut: #e94560;
+    --accent: #6c8cff; --warn: #ffb454;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; display: flex; }
+  /* Sidebar */
+  #sidebar { width: 280px; background: var(--panel); border-right: 1px solid var(--line);
+             display: flex; flex-direction: column; flex-shrink: 0; }
+  #sidebar h1 { font-size: 15px; margin: 0; padding: 16px; border-bottom: 1px solid var(--line);
+                font-weight: 600; letter-spacing: .3px; }
+  #sidebar h1 small { display:block; color: var(--dim); font-weight: 400; font-size: 11px; margin-top: 3px; }
+  #queue { overflow-y: auto; flex: 1; padding: 8px; }
+  .qgroup-label { font-size: 11px; text-transform: uppercase; color: var(--dim); padding: 10px 8px 4px; letter-spacing: .5px; }
+  .qitem { padding: 9px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; display: flex;
+           align-items: center; gap: 8px; margin-bottom: 2px; }
+  .qitem:hover { background: var(--panel2); }
+  .qitem.active { background: var(--accent); color: #fff; }
+  .qitem .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+  .qitem .dot.done { background: var(--keep); }
+  .qitem .dot.active { background: var(--warn); }
+  .qitem .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  /* Main */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #topbar { padding: 12px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 18px; }
+  #title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; max-width: 420px; }
+  #title .chan { color: var(--accent); font-size: 11px; border: 1px solid var(--accent); border-radius: 5px; padding: 1px 6px; margin-left: 8px; }
+  .stats { display: flex; gap: 16px; font-size: 12px; color: var(--dim); margin-left: auto; }
+  .stats b { color: var(--text); font-weight: 600; }
+  .stats .removed b { color: var(--cut); }
+  .stats .kept b { color: var(--keep); }
+  #stage { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  video { width: 320px; max-height: 200px; background: #000; border-radius: 8px; float: right; margin: 0 0 12px 16px; }
+  /* Waveform */
+  #waveWrap { position: relative; background: var(--panel); border: 1px solid var(--line);
+              border-radius: 10px; padding: 0; overflow: hidden; clear: none; }
+  #wave { display: block; width: 100%; height: 260px; cursor: crosshair; }
+  #ruler { height: 18px; font-size: 10px; color: var(--dim); position: relative; }
+  .legend { display: flex; gap: 16px; font-size: 11px; color: var(--dim); padding: 6px 10px; flex-wrap: wrap; align-items: center; }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+  /* Controls */
+  #controls { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: flex-end; }
+  .ctl { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--dim); }
+  .ctl label b { color: var(--text); }
+  .ctl input[type=range] { width: 150px; accent-color: var(--accent); }
+  .btnrow { display: flex; gap: 10px; margin-top: 18px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; border: none; border-radius: 8px; padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  button.primary { background: var(--keep); color: #08231a; }
+  button.ghost { background: var(--panel2); color: var(--text); }
+  button.warn { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  .hint { font-size: 11px; color: var(--dim); margin-top: 10px; line-height: 1.6; }
+  .hint kbd { background: var(--panel2); border-radius: 4px; padding: 1px 5px; border: 1px solid var(--line); font-size: 10px; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+           border: 1px solid var(--line); padding: 12px 18px; border-radius: 10px; font-size: 13px; max-width: 620px;
+           box-shadow: 0 10px 30px rgba(0,0,0,.5); display: none; z-index: 50; }
+  #toast.show { display: block; }
+  #toast b { color: var(--keep); }
+  #overlay { position: absolute; inset: 0; background: rgba(20,20,31,.82); display: none; align-items: center;
+             justify-content: center; flex-direction: column; gap: 14px; z-index: 20; border-radius: 10px; }
+  #overlay.show { display: flex; }
+  .spin { width: 38px; height: 38px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s 1s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  #empty { color: var(--dim); text-align: center; margin-top: 80px; font-size: 14px; line-height: 1.7; }
+  .meta-note { font-size: 11px; color: var(--warn); margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>Silence Review<small id="sub">speech-gated · learns per folder</small></h1>
+    <div id="queue"></div>
+  </div>
+  <div id="main">
+    <div id="topbar">
+      <div id="title">No file loaded</div>
+      <div class="stats">
+        <span class="orig">orig <b id="st-orig">–</b></span>
+        <span class="kept">keep <b id="st-kept">–</b></span>
+        <span class="removed">cut <b id="st-removed">–</b></span>
+        <span>gaps <b id="st-cuts">–</b></span>
+        <span>ghosts <b id="st-halluc">–</b></span>
+      </div>
+    </div>
+    <div id="stage">
+      <div id="empty">Pick a clip from the queue on the left to analyze it.<br>
+        The waveform shows amplitude (top) and <span style="color:var(--keep)">voice-band energy</span> vs the
+        cut threshold (bottom).</div>
+      <div id="editor" style="display:none">
+        <video id="vid" controls></video>
+        <div id="waveWrap">
+          <canvas id="wave"></canvas>
+          <div id="ruler"></div>
+          <div id="overlay"><div class="spin"></div><div id="ovtext">Transcribing…</div></div>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--keep);opacity:.35"></i>keep</span>
+          <span><i style="background:var(--cut);opacity:.3"></i>cut</span>
+          <span><i style="background:var(--keep)"></i>voice-band energy</span>
+          <span><i style="background:var(--warn)"></i>cut threshold</span>
+          <span><i style="background:var(--accent)"></i>words</span>
+          <span style="margin-left:auto">scroll = zoom · shift+scroll = pan</span>
+        </div>
+
+        <div id="controls">
+          <div class="ctl"><label>Sensitivity <b><span id="v-margin"></span> dB</b> <span style="color:var(--dim)">(lower = cut less)</span></label>
+            <input type="range" id="s-margin" min="3" max="20" step="0.5"></div>
+          <div class="ctl"><label>Lead-in pad <b><span id="v-pre"></span> s</b></label>
+            <input type="range" id="s-pre" min="0" max="0.6" step="0.02"></div>
+          <div class="ctl"><label>Tail pad <b><span id="v-post"></span> s</b></label>
+            <input type="range" id="s-post" min="0" max="0.8" step="0.02"></div>
+          <div class="ctl"><label>Min gap to cut <b><span id="v-gap"></span> s</b></label>
+            <input type="range" id="s-gap" min="0.2" max="2" step="0.05"></div>
+          <button class="warn" id="btn-reset">Reset to auto</button>
+        </div>
+
+        <div class="btnrow">
+          <button class="ghost" id="btn-preview">▶ Preview kept-only</button>
+          <button class="primary" id="btn-approve">Approve &amp; Export →</button>
+          <button class="warn" id="btn-skip">Skip</button>
+          <span class="meta-note" id="metanote"></span>
+        </div>
+        <div class="hint">
+          Drag a <b>boundary line</b> to move a cut edge · <b>click a segment</b> to flip keep⇄cut ·
+          <b>shift-drag</b> on the wave to mark a new cut · <kbd>space</kbd> play/pause ·
+          <kbd>C</kbd>/<kbd>K</kbd> cut/keep selection · <kbd>Z</kbd> fit.
+          Your edits train the <b id="hint-chan">folder</b> profile so the next clip needs fewer fixes.
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = t => { t = Math.max(0, t||0); const m = Math.floor(t/60), s = (t%60); return `${m}:${s.toFixed(s<10?1:0).padStart(s<10?4:2,'0')}`; };
+const api = async (path, body) => {
+  const r = await fetch(path, body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {});
+  return r.json();
+};
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+
+const S = {
+  queue: [], currentPath: null, channel: 'default',
+  duration: 0, words: [], wave: null,
+  proposed: [],            // original auto keep-segments (for learning diff)
+  segs: [],                // contiguous [{start,end,keep}]
+  view: {a:0, b:0},
+  params: {},              // current slider overrides
+  defaults: {},            // profile from server (auto)
+  dragging: null, selecting: null, sel: null,
+  resegTimer: null,
+};
+
+/* ---------- queue ---------- */
+async function loadQueue() {
+  const d = await api('/api/queue');
+  S.queue = d.items || [];
+  renderQueue();
+}
+function renderQueue() {
+  const q = $('#queue'); q.innerHTML = '';
+  let lastChan = null;
+  S.queue.forEach(it => {
+    if (it.channel !== lastChan) {
+      lastChan = it.channel;
+      const lab = document.createElement('div'); lab.className = 'qgroup-label'; lab.textContent = it.channel;
+      q.appendChild(lab);
+    }
+    const el = document.createElement('div');
+    el.className = 'qitem' + (it.path === S.currentPath ? ' active' : '');
+    const dot = it.status === 'done' ? 'done' : (it.path === S.currentPath ? 'active' : '');
+    el.innerHTML = `<span class="dot ${dot}"></span><span class="nm">${it.name}</span>`;
+    el.onclick = () => selectFile(it);
+    q.appendChild(el);
+  });
+}
+
+/* ---------- load + analyze ---------- */
+async function selectFile(it) {
+  S.currentPath = it.path; S.channel = it.channel; renderQueue();
+  previewKept = false;   // don't carry kept-only playback into the next clip
+  $('#empty').style.display = 'none'; $('#editor').style.display = 'block';
+  $('#title').innerHTML = `${it.name}<span class="chan">${it.channel}</span>`;
+  $('#hint-chan').textContent = it.channel;
+  showOverlay('Loading…');
+  const load = await api('/api/load', { path: it.path });
+  if (!load.ok) { toast('Load failed: ' + load.error); hideOverlay(); return; }
+  S.duration = load.duration;
+  const vid = $('#vid'); vid.src = '/api/video?ts=' + Date.now(); vid.load();
+  await analyze();
+}
+
+let progressTimer = null;
+function startProgress() {
+  stopProgress();
+  progressTimer = setInterval(async () => {
+    const p = await api('/api/progress');
+    $('#ovtext').textContent = ({transcribing:'Transcribing (large-v3-turbo)…', analyzing:'Analyzing energy…', rendering:'Rendering video…'})[p.stage] || 'Working…';
+  }, 700);
+}
+function stopProgress(){ if (progressTimer) clearInterval(progressTimer); progressTimer = null; }
+
+async function analyze() {
+  showOverlay('Transcribing…'); startProgress();
+  const d = await api('/api/analyze', { channel: S.channel });
+  stopProgress(); hideOverlay();
+  if (!d.ok) { toast('Analyze failed: ' + d.error); return; }
+  S.duration = d.totalDuration; S.words = d.words || []; S.wave = d.waveform;
+  S.defaults = d.profile || {}; S.params = {};
+  S.proposed = (d.segments || []).map(s => ({...s}));
+  S.segs = buildContiguous(d.segments, S.duration);
+  S.view = { a: 0, b: S.duration };
+  syncSliders(S.defaults);
+  $('#metanote').textContent = d.warning || (d.meta && d.meta.fallbackKeptAll ? '⚠ no speech detected — kept whole clip' : '');
+  resizeCanvas(); draw(); updateStats(d.meta);
+}
+
+// Build contiguous keep/cut segments over [0,duration] from a list of keep ranges.
+function buildContiguous(keep, dur) {
+  const segs = []; let cursor = 0;
+  (keep||[]).slice().sort((a,b)=>a.start-b.start).forEach(k => {
+    const s = clamp(k.start,0,dur), e = clamp(k.end,0,dur);
+    if (s > cursor) segs.push({start:cursor, end:s, keep:false});
+    segs.push({start:Math.max(s,cursor), end:e, keep:true});
+    cursor = Math.max(cursor, e);
+  });
+  if (cursor < dur) segs.push({start:cursor, end:dur, keep:false});
+  if (!segs.length) segs.push({start:0,end:dur,keep:true});
+  return mergeAdjacent(segs);
+}
+function mergeAdjacent(segs) {
+  const out = [];
+  segs.sort((a,b)=>a.start-b.start).forEach(s => {
+    if (s.end - s.start < 1e-4) return;
+    const last = out[out.length-1];
+    if (last && last.keep === s.keep && Math.abs(last.end - s.start) < 1e-4) last.end = s.end;
+    else out.push({...s});
+  });
+  return out;
+}
+function keepList() { return mergeAdjacent(S.segs).filter(s => s.keep).map(s => ({start:s.start, end:s.end})); }
+
+/* ---------- re-tune (server, no whisper) ---------- */
+function syncSliders(p) {
+  $('#s-margin').value = p.speech_margin_db; $('#v-margin').textContent = (+p.speech_margin_db).toFixed(1);
+  $('#s-pre').value = p.pre_pad; $('#v-pre').textContent = (+p.pre_pad).toFixed(2);
+  $('#s-post').value = p.post_pad; $('#v-post').textContent = (+p.post_pad).toFixed(2);
+  $('#s-gap').value = p.min_cut_gap; $('#v-gap').textContent = (+p.min_cut_gap).toFixed(2);
+}
+function sliderChanged() {
+  S.params = {
+    speech_margin_db: +$('#s-margin').value, pre_pad: +$('#s-pre').value,
+    post_pad: +$('#s-post').value, min_cut_gap: +$('#s-gap').value,
+  };
+  $('#v-margin').textContent = S.params.speech_margin_db.toFixed(1);
+  $('#v-pre').textContent = S.params.pre_pad.toFixed(2);
+  $('#v-post').textContent = S.params.post_pad.toFixed(2);
+  $('#v-gap').textContent = S.params.min_cut_gap.toFixed(2);
+  clearTimeout(S.resegTimer);
+  S.resegTimer = setTimeout(reseg, 180);
+}
+async function reseg() {
+  // Don't yank segments out from under an in-progress hand edit.
+  if (S.dragging || S.selecting) { clearTimeout(S.resegTimer); S.resegTimer = setTimeout(reseg, 200); return; }
+  const d = await api('/api/resegment', { channel: S.channel, overrides: S.params });
+  if (!d.ok) return;
+  if (S.dragging || S.selecting) return;
+  S.segs = buildContiguous(d.segments, S.duration);
+  draw(); updateStats(d.meta);
+}
+['s-margin','s-pre','s-post','s-gap'].forEach(id => $('#'+id).addEventListener('input', sliderChanged));
+$('#btn-reset').onclick = () => { S.params = {}; syncSliders(S.defaults); reseg(); };
+
+/* ---------- stats ---------- */
+function updateStats(meta) {
+  const kept = keepList().reduce((s,x)=>s+(x.end-x.start),0);
+  const cuts = mergeAdjacent(S.segs).filter(s=>!s.keep && s.end-s.start>0.05).length;
+  $('#st-orig').textContent = fmt(S.duration);
+  $('#st-kept').textContent = fmt(kept);
+  $('#st-removed').textContent = fmt(S.duration - kept) + ` (${Math.round((1-kept/Math.max(1e-6,S.duration))*100)}%)`;
+  $('#st-cuts').textContent = cuts;
+  $('#st-halluc').textContent = meta ? (meta.hallucinationCount||0) : '–';
+}
+
+/* ---------- canvas ---------- */
+const cv = $('#wave'); const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resizeCanvas() {
+  DPR = window.devicePixelRatio || 1;
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', () => { if (S.wave){ resizeCanvas(); draw(); } });
+
+const t2x = t => (t - S.view.a) / Math.max(1e-6,(S.view.b - S.view.a)) * W;
+const x2t = x => S.view.a + (x / W) * (S.view.b - S.view.a);
+
+function draw() {
+  if (!S.wave) return;
+  ctx.clearRect(0,0,W,H);
+  const topH = H * 0.56, botY = topH + 6, botH = H - botY - 2, mid = topH/2;
+
+  // keep/cut region tint (whole height)
+  S.segs.forEach(s => {
+    const x1 = t2x(s.start), x2 = t2x(s.end);
+    if (x2 < 0 || x1 > W) return;
+    ctx.fillStyle = s.keep ? 'rgba(78,204,163,0.13)' : 'rgba(233,69,96,0.16)';
+    ctx.fillRect(x1, 0, x2-x1, H);
+  });
+
+  // selection
+  if (S.sel) {
+    const x1=t2x(Math.min(S.sel.a,S.sel.b)), x2=t2x(Math.max(S.sel.a,S.sel.b));
+    ctx.fillStyle = 'rgba(108,140,255,0.25)'; ctx.fillRect(x1,0,x2-x1,H);
+  }
+
+  // amplitude waveform (top lane)
+  const peaks = S.wave.peaks, n = peaks.length;
+  ctx.fillStyle = '#5a6';
+  ctx.globalAlpha = 0.55;
+  for (let x=0; x<W; x++) {
+    const ta = x2t(x), tb = x2t(x+1);
+    const ia = clamp(Math.floor(ta/S.duration*n),0,n-1), ib = clamp(Math.ceil(tb/S.duration*n),0,n);
+    let pk = 0; for (let i=ia;i<=ib && i<n;i++) pk = Math.max(pk, peaks[i]);
+    const h = pk * (mid-2);
+    ctx.fillRect(x, mid-h, 1, h*2);
+  }
+  ctx.globalAlpha = 1;
+
+  // voice-band energy (bottom lane) + threshold
+  const sdb = S.wave.speechDb, m = sdb.length;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of sdb){ if(v>-200){ lo=Math.min(lo,v); hi=Math.max(hi,v);} }
+  if (!isFinite(lo)) { lo = -80; hi = 0; }
+  hi = Math.max(hi, (S.wave.thresholdDb||hi)+3); lo = Math.min(lo, (S.wave.thresholdDb||lo)-3);
+  const db2y = db => botY + botH - (clamp(db,lo,hi)-lo)/Math.max(1e-6,(hi-lo))*botH;
+  // fill area
+  ctx.beginPath(); ctx.moveTo(0, botY+botH);
+  for (let x=0;x<W;x++){ const t=x2t(x); const i=clamp(Math.floor(t/S.duration*m),0,m-1); ctx.lineTo(x, db2y(sdb[i])); }
+  ctx.lineTo(W, botY+botH); ctx.closePath();
+  ctx.fillStyle = 'rgba(78,204,163,0.30)'; ctx.fill();
+  ctx.beginPath();
+  for (let x=0;x<W;x++){ const t=x2t(x); const i=clamp(Math.floor(t/S.duration*m),0,m-1); const y=db2y(sdb[i]); x?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  ctx.strokeStyle = '#4ecca3'; ctx.lineWidth = 1; ctx.stroke();
+  // threshold line
+  if (S.wave.thresholdDb != null) {
+    const y = db2y(S.wave.thresholdDb);
+    ctx.strokeStyle = '#ffb454'; ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // word ticks
+  ctx.fillStyle = 'rgba(108,140,255,0.9)';
+  S.words.forEach(w => { const x = t2x((w.start+w.end)/2); if (x>=0&&x<=W) ctx.fillRect(x, botY-5, 1.4, 5); });
+
+  // boundary handles
+  S.segs.forEach((s,i) => {
+    if (i===0) return;
+    const x = t2x(s.start);
+    if (x<0||x>W) return;
+    ctx.strokeStyle = '#fff'; ctx.globalAlpha = .8; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.fillStyle = '#fff';
+    ctx.fillRect(x-3, mid-7, 6, 14);
+  });
+
+  // playhead
+  const vid = $('#vid');
+  if (vid && !isNaN(vid.currentTime)) {
+    const x = t2x(vid.currentTime);
+    if (x>=0&&x<=W){ ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  }
+  drawRuler();
+}
+function drawRuler() {
+  const r = $('#ruler'); r.innerHTML = '';
+  const span = S.view.b - S.view.a;
+  const step = span>600?120:span>240?60:span>60?15:span>20?5:span>6?2:1;
+  for (let t=Math.ceil(S.view.a/step)*step; t<=S.view.b; t+=step) {
+    const x = t2x(t); const tick = document.createElement('div');
+    tick.style.cssText = `position:absolute;left:${x}px;top:0;border-left:1px solid var(--line);padding-left:3px`;
+    tick.textContent = fmt(t); r.appendChild(tick);
+  }
+}
+
+/* ---------- interaction ---------- */
+const EDGE = 6;
+function boundaryAt(x) {
+  for (let i=1;i<S.segs.length;i++){ if (Math.abs(t2x(S.segs[i].start)-x) <= EDGE) return i; }
+  return -1;
+}
+function segAt(t) { const tt = Math.min(t, S.duration - 1e-6); return S.segs.findIndex(s => tt>=s.start && tt<s.end); }
+
+cv.addEventListener('mousedown', e => {
+  const rect = cv.getBoundingClientRect(); const x = e.clientX-rect.left;
+  if (e.shiftKey) { S.selecting = {x0:x}; S.sel = {a:x2t(x), b:x2t(x)}; return; }
+  const bi = boundaryAt(x);
+  if (bi > 0) { S.dragging = {i:bi}; return; }
+  S.mouseDownT = x2t(x); S.mouseDownX = x; S.mouseDownView = {a:S.view.a, b:S.view.b};
+});
+window.addEventListener('mousemove', e => {
+  const rect = cv.getBoundingClientRect(); const x = e.clientX-rect.left;
+  if (S.selecting) { S.sel.b = x2t(x); draw(); return; }
+  if (S.dragging) {
+    const i = S.dragging.i; const t = clamp(x2t(x), S.segs[i-1].start+0.02, S.segs[i].end-0.02);
+    S.segs[i].start = t; S.segs[i-1].end = t; draw(); updateStats(); return;
+  }
+  // cursor hint
+  cv.style.cursor = boundaryAt(x) > 0 ? 'ew-resize' : 'crosshair';
+});
+window.addEventListener('mouseup', e => {
+  if (S.selecting) {
+    S.selecting = null;
+    if (S.sel && Math.abs(S.sel.b-S.sel.a) < 0.05) S.sel = null;
+    draw(); return;
+  }
+  if (S.dragging) { S.dragging = null; S.segs = mergeAdjacent(S.segs); draw(); updateStats(); return; }
+  if (S.mouseDownX != null) {
+    const rect = cv.getBoundingClientRect(); const x = e.clientX-rect.left;
+    // Treat as a click only if the view didn't pan/zoom between press and release
+    // (otherwise pixel deltas are meaningless) and the pointer barely moved.
+    const viewMoved = !S.mouseDownView || S.mouseDownView.a !== S.view.a || S.mouseDownView.b !== S.view.b;
+    if (!viewMoved && Math.abs(x - S.mouseDownX) < 4) {
+      const i = segAt(x2t(x));
+      if (i>=0) {
+        if (e.altKey) { $('#vid').currentTime = x2t(x); }
+        else { S.segs[i].keep = !S.segs[i].keep; S.segs = mergeAdjacent(S.segs); draw(); updateStats(); }
+      }
+    }
+    S.mouseDownX = null;
+  }
+});
+// double click a boundary to delete it (merge the two segments into the left one's state)
+cv.addEventListener('dblclick', e => {
+  const rect = cv.getBoundingClientRect(); const x = e.clientX-rect.left;
+  const bi = boundaryAt(x);
+  if (bi>0){ S.segs[bi-1].end = S.segs[bi].end; S.segs.splice(bi,1); S.segs = mergeAdjacent(S.segs); draw(); updateStats(); }
+});
+// zoom / pan
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect(); const x = e.clientX-rect.left;
+  if (e.shiftKey) {
+    const pan = (e.deltaY+e.deltaX)/W * (S.view.b-S.view.a);
+    let a = S.view.a+pan, b = S.view.b+pan;
+    if (a<0){ b-=a; a=0; } if (b>S.duration){ a-=(b-S.duration); b=S.duration; a=Math.max(0,a); }
+    S.view = {a,b};
+  } else {
+    const t = x2t(x); const f = e.deltaY>0 ? 1.18 : 1/1.18;
+    const maxSpan = Math.max(1e-3, S.duration);
+    let span = clamp((S.view.b-S.view.a)*f, Math.min(0.5, maxSpan), maxSpan);
+    let a = clamp(t - (x/W)*span, 0, Math.max(0, S.duration-span));
+    let b = Math.min(S.duration, a+span);
+    S.view = {a,b};
+  }
+  draw();
+}, {passive:false});
+
+function applyToSelection(keep) {
+  if (!S.sel) return;
+  const a = Math.min(S.sel.a,S.sel.b), b = Math.max(S.sel.a,S.sel.b);
+  const next = [];
+  S.segs.forEach(s => {
+    if (s.end<=a || s.start>=b) { next.push(s); return; }
+    if (s.start < a) next.push({start:s.start, end:a, keep:s.keep});
+    next.push({start:Math.max(s.start,a), end:Math.min(s.end,b), keep});
+    if (s.end > b) next.push({start:b, end:s.end, keep:s.keep});
+  });
+  S.segs = mergeAdjacent(next); S.sel = null; draw(); updateStats();
+}
+
+document.addEventListener('keydown', e => {
+  if ($('#editor').style.display==='none') return;
+  if (e.target.tagName === 'INPUT') return;
+  const vid = $('#vid');
+  if (e.code==='Space'){ e.preventDefault(); vid.paused?vid.play():vid.pause(); }
+  else if (e.key==='c'||e.key==='C') applyToSelection(false);
+  else if (e.key==='k'||e.key==='K') applyToSelection(true);
+  else if (e.key==='z'||e.key==='Z'){ S.view={a:0,b:S.duration}; draw(); }
+});
+
+/* ---------- playback ---------- */
+let previewKept = false;
+$('#btn-preview').onclick = () => { const v=$('#vid'); previewKept=true; if(v.paused)v.play(); };
+$('#vid').addEventListener('pause', ()=>{ previewKept = false; });  // exit kept-only on any pause
+$('#vid').addEventListener('play', ()=>requestAnimationFrame(tick));
+function tick(){ if(!$('#vid').paused){ draw(); requestAnimationFrame(tick);} else draw(); }
+$('#vid').addEventListener('timeupdate', () => {
+  if (!previewKept) return;
+  const t = $('#vid').currentTime; const i = segAt(t);
+  if (i>=0 && !S.segs[i].keep) {
+    const nxt = S.segs.find(s => s.keep && s.start > t);
+    if (nxt) $('#vid').currentTime = nxt.start; else $('#vid').pause();
+  }
+});
+
+/* ---------- approve / skip ---------- */
+$('#btn-approve').onclick = async () => {
+  const it = S.queue.find(q=>q.path===S.currentPath); if (!it) return;
+  const keep = keepList(); if (!keep.length){ toast('Nothing kept — adjust before exporting.'); return; }
+  $('#btn-approve').disabled = true; showOverlay('Rendering…'); startProgress();
+  const d = await api('/api/render', {
+    segments: keep, channel: S.channel, output: it.output, name: it.name,
+    proposed: S.proposed, learn: true,
+  });
+  stopProgress(); hideOverlay(); $('#btn-approve').disabled = false;
+  if (!d.ok){ toast('Render failed: ' + d.error); return; }
+  it.status = 'done'; renderQueue();
+  let msg = `<b>Exported</b> ${it.name.replace(/\.[^.]+$/,'')} → ${fmt(d.keptDuration)} kept.`;
+  if (d.learn && d.learn.changes) msg += `<br><span style="color:var(--dim)">Learned (${S.channel}): ${d.learn.changes.join(' · ')}</span>`;
+  toast(msg, 7000);
+  const next = S.queue.find(q=>q.status!=='done');
+  if (next) setTimeout(()=>selectFile(next), 900);
+};
+$('#btn-skip').onclick = () => { const next = S.queue.find(q=>q.status!=='done' && q.path!==S.currentPath); if (next) selectFile(next); };
+
+/* ---------- ui helpers ---------- */
+function showOverlay(t){ $('#ovtext').textContent=t; $('#overlay').classList.add('show'); }
+function hideOverlay(){ $('#overlay').classList.remove('show'); }
+let toastTimer;
+function toast(html, ms=4000){ const t=$('#toast'); t.innerHTML=html; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'), ms); }
+
+loadQueue();
+setInterval(loadQueue, 5000);
+</script>
+</body>
+</html>

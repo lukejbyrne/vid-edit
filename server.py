@@ -14,6 +14,9 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import speech_detect
+import calibration
+
 # Load .env file if present
 env_path = Path(__file__).parent / ".env"
 if env_path.exists():
@@ -39,9 +42,20 @@ DEFAULT_WORD_POST_PAD = 0.25
 DEFAULT_MAX_WORD_GAP = 1.00
 DEFAULT_FILLER_GAP = 0.20
 FILLER_WORDS = {"um", "uh", "uhm", "umm", "erm", "er", "ah"}
-DEFAULT_MLX_WHISPER_MODEL = os.environ.get("VID_EDIT_MLX_WHISPER_MODEL", "mlx-community/whisper-tiny")
-DEFAULT_WHISPER_MODEL = os.environ.get("VID_EDIT_WHISPER_MODEL", "tiny")
+# Accuracy matters far more than speed here: whisper-tiny both misses real words
+# (clipping speech) and hallucinates ghost phrases over music/silence (keeping dead
+# air). large-v3-turbo is accurate and still ~real-time on Apple Silicon.
+DEFAULT_MLX_WHISPER_MODEL = os.environ.get("VID_EDIT_MLX_WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
+DEFAULT_WHISPER_MODEL = os.environ.get("VID_EDIT_WHISPER_MODEL", "small.en")
 DEFAULT_WHISPER_LANGUAGE = os.environ.get("VID_EDIT_WHISPER_LANGUAGE", "en")
+
+# Batch review queue (server-side file paths -> reviewed -> rendered to disk).
+QUEUE = {"items": [], "current": None}
+_queue_lock = threading.Lock()
+
+# Cache of the last analyze() so the UI can re-tune params (padding/sensitivity)
+# instantly via /api/resegment, without re-running Whisper.
+_LAST = {"path": None, "analysis": None, "words": None}
 
 
 def _set_progress(**kwargs):
@@ -285,9 +299,32 @@ def transcribe_words_local(filepath, language=DEFAULT_WHISPER_LANGUAGE):
         if language:
             cmd.extend(["--language", language])
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Anti-hallucination decode settings. Both CLIs accept these (mlx uses
+        # dashes, openai-whisper uses underscores). Greedy decode at temp 0,
+        # don't carry context across windows (stops repeated-phrase drift), and
+        # let whisper skip its own detected silence. The energy gate in
+        # speech_detect is the real backstop, but these reduce ghosts at source.
+        sep = "-" if is_mlx else "_"
+        def flag(name):
+            return "--" + name.replace("_", sep)
+        optional_flags = [
+            flag("temperature"), "0",
+            flag("condition_on_previous_text"), "False",
+            flag("no_speech_threshold"), "0.6",
+            flag("logprob_threshold"), "-1.0",
+            flag("compression_ratio_threshold"), "2.4",
+            flag("hallucination_silence_threshold"), "0.5",
+        ]
+
+        result = subprocess.run(cmd + optional_flags, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout)[-1200:])
+            err = (result.stderr or result.stdout or "")
+            # If this whisper build rejects one of the optional decode flags,
+            # retry with just the core args rather than losing all word data.
+            if re.search(r"unrecognized arguments|unknown|invalid choice|no such option|unexpected", err, re.I):
+                result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError((result.stderr or result.stdout)[-1200:])
 
         json_path = tmpdir / "audio.json"
         if not json_path.exists():
@@ -428,6 +465,13 @@ class Handler(SimpleHTTPRequestHandler):
             "/api/find-duplicates": self.handle_find_duplicates,
             "/api/export": self.handle_export,
             "/api/render-captions": self.handle_render_captions,
+            # speech-gated review workflow
+            "/api/queue": self.handle_queue_set,
+            "/api/load": self.handle_load,
+            "/api/analyze": self.handle_analyze,
+            "/api/resegment": self.handle_resegment,
+            "/api/learn": self.handle_learn,
+            "/api/render": self.handle_render,
         }
         handler = routes.get(path)
         if handler:
@@ -443,8 +487,239 @@ class Handler(SimpleHTTPRequestHandler):
             self.handle_video()
         elif path == "/api/progress":
             self.send_json(_get_progress())
+        elif path == "/api/queue":
+            self.send_json({"ok": True, **QUEUE})
+        elif path == "/api/profile":
+            qs = parse_qs(urlparse(self.path).query)
+            channel = qs.get("channel", ["default"])[0]
+            raw = calibration.load_raw(channel)
+            self.send_json({"ok": True, "channel": raw["channel"], "samples": raw["samples"],
+                            "overrides": raw["overrides"], "effective": calibration.load_profile(channel),
+                            "history": raw.get("history", [])[-10:]})
         else:
             super().do_GET()
+
+    # ---- Speech-gated review workflow ----
+    def _read_json(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        return json.loads(self.rfile.read(n)) if n else {}
+
+    VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
+
+    def handle_queue_set(self):
+        body = self._read_json()
+        exts = {e.lower() if e.startswith(".") else "." + e.lower()
+                for e in body.get("exts", [])} or self.VIDEO_EXTS
+        items = []
+        seen = set()
+
+        def add_file(path, channel=None):
+            p = Path(path)
+            if not p.is_file() or p.suffix.lower() not in exts:
+                return
+            rp = str(p.resolve())
+            if rp in seen:
+                return
+            seen.add(rp)
+            ch = channel or calibration._safe_channel(p.parent.name)
+            out = p.parent / "no-silence" / (p.stem + ".mp4")
+            items.append({
+                "path": rp, "name": p.name, "folder": str(p.parent),
+                "channel": ch, "output": str(out), "status": "pending",
+            })
+
+        for folder in body.get("folders", []):
+            fp = Path(folder).expanduser()
+            ch = calibration._safe_channel(fp.name)
+            globber = fp.rglob("*") if body.get("recursive") else fp.glob("*")
+            for f in sorted(globber):
+                add_file(f, ch)
+        for f in body.get("files", []):
+            add_file(Path(f).expanduser())
+
+        with _queue_lock:
+            QUEUE["items"] = items
+            QUEUE["current"] = None
+        self.send_json({"ok": True, "items": items, "count": len(items)})
+
+    def handle_load(self):
+        body = self._read_json()
+        src = Path(str(body.get("path", ""))).expanduser()
+        if not src.is_file():
+            self.send_json({"ok": False, "error": f"File not found: {src}"}, 400)
+            return
+        target = os.path.join(UPLOAD_DIR, "input.mp4")
+        try:
+            # Atomic swap: build a temp symlink then os.replace it onto input.mp4,
+            # so there's never a window where input.mp4 is missing.
+            tmp_link = os.path.join(UPLOAD_DIR, f"input.link.{os.getpid()}.{threading.get_ident()}")
+            if os.path.islink(tmp_link) or os.path.exists(tmp_link):
+                os.remove(tmp_link)
+            os.symlink(str(src.resolve()), tmp_link)
+            os.replace(tmp_link, target)
+            # Stale analysis from the previous file must not be reused.
+            _LAST.update(path=None, analysis=None, words=None)
+            duration = get_duration(target)
+            width, height = get_video_dimensions(target)
+            with open(METADATA_PATH, "w") as f:
+                json.dump({"sourceName": src.name,
+                           "downloadName": safe_download_name(src.name)}, f)
+            with _queue_lock:
+                QUEUE["current"] = str(src.resolve())
+            self.send_json({"ok": True, "name": src.name, "duration": duration,
+                            "width": width, "height": height})
+        except Exception as e:
+            self.send_json({"ok": False, "error": str(e)}, 500)
+
+    def handle_analyze(self):
+        body = self._read_json()
+        channel = body.get("channel", "default")
+        overrides = body.get("overrides") or {}
+        filepath = os.path.join(UPLOAD_DIR, "input.mp4")
+        if not os.path.exists(filepath):
+            self.send_json({"ok": False, "error": "No file loaded"}, 400)
+            return
+        if _get_progress()["active"]:
+            self.send_json({"ok": False, "error": "Another job is already running"}, 409)
+            return
+        _set_progress(active=True, percent=0, stage="transcribing", error=None)
+        try:
+            ffmpeg, _ffprobe = get_video_tools()
+            try:
+                words = transcribe_words_local(filepath)
+            except Exception as e:
+                words = []
+                transcribe_warning = f"Transcription failed ({e}); using energy gate only."
+            else:
+                transcribe_warning = None
+            _set_progress(percent=60, stage="analyzing")
+            analysis = speech_detect.analyze_audio(filepath, ffmpeg=ffmpeg)
+            _LAST.update(path=os.path.realpath(filepath), analysis=analysis, words=words)
+            profile = calibration.load_profile(channel)
+            for k, v in overrides.items():
+                if v is not None:
+                    profile[k] = v
+            keep, cuts, meta = speech_detect.detect_segments(analysis, words, profile)
+
+            n = 2400
+            wave = {
+                "peaks": speech_detect.downsample(analysis["peaks"], n),
+                "speechDb": speech_detect.downsample(analysis["speech_db"], n),
+                "fullDb": speech_detect.downsample(analysis["full_db"], n),
+                "thresholdDb": meta.get("threshold_db"),
+                "floorDb": meta.get("floor_db"),
+            }
+            words_out = [{"start": round(w["start"], 3), "end": round(w["end"], 3),
+                          "word": w.get("word", "")} for w in words]
+            self.send_json({
+                "ok": True, "segments": keep, "cuts": cuts, "meta": meta,
+                "words": words_out, "wordCount": len(words),
+                "waveform": wave, "totalDuration": analysis["duration"],
+                "channel": channel, "profile": profile,
+                "warning": transcribe_warning,
+            })
+        except Exception as e:
+            self.send_json({"ok": False, "error": str(e)}, 500)
+        finally:
+            _set_progress(active=False, percent=0, stage="idle")
+
+    def handle_resegment(self):
+        """Re-run only the segment math (no Whisper) with new params -> instant tuning."""
+        body = self._read_json()
+        channel = body.get("channel", "default")
+        overrides = body.get("overrides") or {}
+        if _LAST.get("analysis") is None:
+            self.send_json({"ok": False, "error": "Nothing analyzed yet"}, 400)
+            return
+        cur = os.path.realpath(os.path.join(UPLOAD_DIR, "input.mp4"))
+        if _LAST.get("path") != cur:
+            self.send_json({"ok": False, "error": "Analysis is stale — re-analyze this clip"}, 409)
+            return
+        try:
+            profile = calibration.load_profile(channel)
+            for k, v in overrides.items():
+                if v is not None:
+                    profile[k] = v
+            keep, cuts, meta = speech_detect.detect_segments(
+                _LAST["analysis"], _LAST["words"], profile)
+            self.send_json({"ok": True, "segments": keep, "cuts": cuts, "meta": meta,
+                            "totalDuration": _LAST["analysis"]["duration"], "profile": profile})
+        except Exception as e:
+            self.send_json({"ok": False, "error": str(e)}, 500)
+
+    def handle_learn(self):
+        body = self._read_json()
+        channel = body.get("channel", "default")
+        proposed = body.get("proposed", [])
+        corrected = body.get("corrected", [])
+        try:
+            summary = calibration.learn_from_corrections(
+                channel, proposed, corrected,
+                duration=body.get("duration"), note=body.get("note"))
+            self.send_json({"ok": True, "summary": summary,
+                            "profile": calibration.load_profile(channel)})
+        except Exception as e:
+            self.send_json({"ok": False, "error": str(e)}, 500)
+
+    def handle_render(self):
+        body = self._read_json()
+        segments = body.get("segments", [])
+        channel = body.get("channel", "default")
+        filepath = os.path.join(UPLOAD_DIR, "input.mp4")
+        if not os.path.exists(filepath):
+            self.send_json({"ok": False, "error": "No file loaded"}, 400)
+            return
+        duration = get_duration(filepath)
+        segments = normalize_segments(segments, duration)
+        if not segments:
+            self.send_json({"ok": False, "error": "No segments to keep"}, 400)
+            return
+
+        out = body.get("output")
+        if not out:
+            self.send_json({"ok": False, "error": "No output path"}, 400)
+            return
+        out_path = Path(out).expanduser()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if _get_progress()["active"]:
+            self.send_json({"ok": False, "error": "Another job is already running"}, 409)
+            return
+        _set_progress(active=True, percent=0, stage="rendering", error=None)
+        try:
+            tmp_out = os.path.join(UPLOAD_DIR, "render_tmp.mp4")
+            result = self._build_and_run_concat(segments, tmp_out)
+            if result.returncode != 0:
+                err = result.stderr[-500:]
+                _set_progress(error=err)
+                self.send_json({"ok": False, "error": err}, 500)
+                return
+            shutil.move(tmp_out, str(out_path))
+            _set_progress(percent=100.0)
+            size = os.path.getsize(out_path)
+            with _queue_lock:
+                cur = QUEUE.get("current")
+                for it in QUEUE["items"]:
+                    if it["path"] == cur:
+                        it["status"] = "done"
+                        it["output"] = str(out_path)
+            # Learn only after the render actually succeeded.
+            learn_summary = None
+            if body.get("learn") and body.get("proposed") is not None:
+                try:
+                    learn_summary = calibration.learn_from_corrections(
+                        channel, body.get("proposed", []), segments,
+                        duration=duration, note=body.get("name"))
+                except Exception as e:
+                    learn_summary = {"error": str(e)}
+            self.send_json({"ok": True, "output": str(out_path), "size": size,
+                            "keptDuration": round(sum(s["end"] - s["start"] for s in segments), 2),
+                            "learn": learn_summary})
+        except Exception as e:
+            _set_progress(error=str(e))
+            self.send_json({"ok": False, "error": str(e)}, 500)
+        finally:
+            _set_progress(active=False, stage="idle")
 
     # ---- Upload ----
     def handle_upload(self):
@@ -1099,8 +1374,12 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Serve static files (index.html, review.html) from the repo dir regardless
+    # of the launch cwd.
+    os.chdir(Path(__file__).parent)
     port = int(os.environ.get("PORT", "8080"))
     print(f"Vid-Edit running at http://localhost:{port}")
+    print(f"Review UI:  http://localhost:{port}/review.html")
     print(f"Temp dir: {UPLOAD_DIR}")
     server = ThreadingHTTPServer(("", port), Handler)
     server.serve_forever()
