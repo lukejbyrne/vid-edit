@@ -41,12 +41,12 @@ DEFAULT_PROFILE = {
     # keep each word region, merge ones close together, then trim the silent
     # head/tail of every region down to where audio actually starts/ends. Tight
     # AND never clips. This is the primary path for finals/batch.
-    "word_pre": 0.04,           # pad before a word when forming its region (s)
-    "word_post": 0.06,          # pad after a word (s)
-    "merge_gap": 0.16,          # merge word regions whose gap is under this (keeps phrases intact) (s)
-    "trim_drop_db": 20.0,       # edge-trim threshold = speech_level - this; trims silent region edges
-    "edge_lead": 0.05,          # silence kept before the first audible sample of a region (s)
-    "edge_tail": 0.10,          # silence kept after the last audible sample (protects tails) (s)
+    "word_pre": 0.06,           # pad before a word when forming its region (s)
+    "word_post": 0.20,          # pad after a word (s) -- tails are NEVER audio-trimmed, only this fixed pad
+    "merge_gap": 0.18,          # merge word regions whose gap is under this (keeps phrases intact) (s)
+    "trim_drop_db": 30.0,       # HEAD-trim threshold = speech_level - this (trims silent lead-in only)
+    "edge_lead": 0.08,          # silence kept before the first audible sample of a region (s)
+    "final_beat": 0.35,         # trailing room kept after the very last word of the clip (s)
 }
 
 
@@ -229,25 +229,26 @@ def detect_segments(analysis, words, profile=None):
 
     valid_words = [w for w in words if w.get("end", 0) > w.get("start", 0)]
     if valid_words:
-        # PRIMARY: word regions, merged, then silent head/tail trimmed to audible.
+        # PRIMARY: keep each word's region (merged), trim ONLY the silent lead-in
+        # (head). Tails are never audio-trimmed — quiet trailing consonants (s, r,
+        # f) read as silence, so trimming them clips words; we keep a fixed
+        # word_post pad instead. The very last word also keeps a natural beat.
         threshold = speech_level - p["trim_drop_db"]
         regions = _merge_keep(
             [{"start": max(0.0, w["start"] - p["word_pre"]), "end": w["end"] + p["word_post"]}
              for w in valid_words], p["merge_gap"], duration)
-        trim_thr = speech_level - p["trim_drop_db"]
         keep = []
         for k in regions:
             ia = int(k["start"] / hop)
             ib = min(len(db), max(ia + 1, int(k["end"] / hop)))
-            seg = db[ia:ib]
-            aud = np.flatnonzero(seg > trim_thr)
-            if len(aud) == 0:
-                keep.append({"start": k["start"], "end": min(k["end"], k["start"] + 0.2)})
-                continue
-            a = max(k["start"], (ia + int(aud[0])) * hop - p["edge_lead"])
-            b = min(k["end"], (ia + int(aud[-1])) * hop + p["edge_tail"])
-            keep.append({"start": a, "end": b})
-        keep = _merge_keep(keep, min(p["merge_gap"], 0.12), duration)
+            aud = np.flatnonzero(db[ia:ib] > threshold)
+            a = k["start"] if len(aud) == 0 else max(k["start"], (ia + int(aud[0])) * hop - p["edge_lead"])
+            keep.append({"start": a, "end": k["end"]})  # tail untouched
+        keep = _merge_keep(keep, 0.12, duration)
+        if keep:
+            above = np.flatnonzero(db > threshold)
+            last_audible = (int(above[-1]) * hop) if len(above) else duration
+            keep[-1]["end"] = min(duration, max(keep[-1]["end"], last_audible + p["final_beat"]))
         cuts = _complement(keep, duration)
     else:
         # FALLBACK (no transcript): plain dBFS silence detection, conservative.
