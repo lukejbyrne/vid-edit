@@ -29,13 +29,14 @@ DEFAULT_PROFILE = {
     # absolute window. This adapts to each recording's loudness yet stays a safe
     # margin under speech so words are never cut. Cuts land only in silence by
     # construction, so we can be tight without clipping.
-    "silence_drop_db": 13.0,    # cut line = speech_level - this many dB
-    "silence_thr_min": -45.0,   # never put the cut line below this dBFS
-    "silence_thr_max": -33.0,   # never put the cut line above this dBFS (protects quiet speech)
+    "silence_drop_db": 24.0,    # cut line = speech_level - this many dB (deep silence only)
+    "silence_thr_min": -54.0,   # never put the cut line below this dBFS
+    "silence_thr_max": -40.0,   # never put the cut line above this dBFS (protects quiet word edges)
     "speech_pct": 85.0,         # percentile of dBFS taken as the representative speech level
-    "min_cut_gap": 0.30,        # only remove silent gaps at least this long (s)
-    "pre_pad": 0.08,            # lead-in kept before speech resumes (s)
-    "post_pad": 0.12,           # tail kept after speech (s) -- protects soft consonant tails
+    "min_cut_gap": 0.35,        # only remove silent gaps at least this long (s)
+    "pre_pad": 0.12,            # lead-in kept before speech resumes (s)
+    "post_pad": 0.18,           # tail kept after speech (s) -- protects soft consonant tails
+    "word_guard": 0.06,         # if word timestamps given, never cut within this of a word (s)
 }
 
 
@@ -230,6 +231,30 @@ def detect_segments(analysis, words, profile=None):
         ce = g["end"] - p["pre_pad"]       # keep a lead-in before the next sound
         if ce - cs >= 0.10:                # something genuinely silent left to remove
             cuts.append({"start": cs, "end": ce})
+
+    # Word guard: if we have word timestamps, never let a cut overlap a word
+    # (belt-and-suspenders against the threshold catching a quiet word edge).
+    if words and p.get("word_guard", 0) > 0:
+        wg = p["word_guard"]
+        spans = [{"start": w["start"] - wg, "end": w["end"] + wg}
+                 for w in words if w.get("end", 0) > w.get("start", 0)]
+        if spans:
+            guarded = []
+            for c in cuts:
+                pieces = [(c["start"], c["end"])]
+                for s in spans:
+                    nxt = []
+                    for a, b in pieces:
+                        if s["end"] <= a or s["start"] >= b:
+                            nxt.append((a, b))
+                        else:
+                            if s["start"] > a:
+                                nxt.append((a, s["start"]))
+                            if s["end"] < b:
+                                nxt.append((s["end"], b))
+                    pieces = nxt
+                guarded.extend({"start": a, "end": b} for a, b in pieces if b - a >= 0.12)
+            cuts = guarded
 
     keep = _complement(cuts, duration)
     fallback = False
