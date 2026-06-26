@@ -47,6 +47,9 @@ DEFAULT_PROFILE = {
     "trim_drop_db": 30.0,       # HEAD-trim threshold = speech_level - this (trims silent lead-in only)
     "edge_lead": 0.08,          # silence kept before the first audible sample of a region (s)
     "final_beat": 0.35,         # trailing room kept after the very last word of the clip (s)
+    "internal_drop_db": 27.0,   # cut deep-silent stretches inside regions below speech - this (true silence only)
+    "internal_gap": 0.18,       # only cut internal silence longer than this (s)
+    "internal_pad": 0.10,       # cushion left on each side of an internal cut (s)
 }
 
 
@@ -249,6 +252,35 @@ def detect_segments(analysis, words, profile=None):
             above = np.flatnonzero(db > threshold)
             last_audible = (int(above[-1]) * hop) if len(above) else duration
             keep[-1]["end"] = min(duration, max(keep[-1]["end"], last_audible + p["final_beat"]))
+        # Remove DEEP-silent stretches that fall INSIDE kept regions (whisper
+        # inflates some word spans across demo pauses, dragging silence in). The
+        # deep threshold means only true silence is cut, never consonants.
+        int_thr = speech_level - p["internal_drop_db"]
+        ipad = p["internal_pad"]
+        internal_cuts = []
+        for g in _mask_to_intervals(db < int_thr, hop, duration):
+            if g["end"] - g["start"] <= p["internal_gap"]:
+                continue
+            cs, ce = g["start"] + ipad, g["end"] - ipad
+            if ce - cs >= 0.08:
+                internal_cuts.append({"start": cs, "end": ce})
+        if internal_cuts:
+            kept_intervals = []
+            for k in keep:
+                pieces = [(k["start"], k["end"])]
+                for c in internal_cuts:
+                    nxt = []
+                    for a, b in pieces:
+                        if c["end"] <= a or c["start"] >= b:
+                            nxt.append((a, b))
+                        else:
+                            if c["start"] > a:
+                                nxt.append((a, c["start"]))
+                            if c["end"] < b:
+                                nxt.append((c["end"], b))
+                    pieces = nxt
+                kept_intervals.extend({"start": a, "end": b} for a, b in pieces if b - a > 0.05)
+            keep = _merge_keep(kept_intervals, 0.10, duration)
         cuts = _complement(keep, duration)
     else:
         # FALLBACK (no transcript): plain dBFS silence detection, conservative.
