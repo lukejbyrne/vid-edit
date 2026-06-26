@@ -33,10 +33,20 @@ DEFAULT_PROFILE = {
     "silence_thr_min": -54.0,   # never put the cut line below this dBFS
     "silence_thr_max": -40.0,   # never put the cut line above this dBFS (protects quiet word edges)
     "speech_pct": 85.0,         # percentile of dBFS taken as the representative speech level
-    "min_cut_gap": 0.35,        # only remove silent gaps at least this long (s)
-    "pre_pad": 0.12,            # lead-in kept before speech resumes (s)
-    "post_pad": 0.18,           # tail kept after speech (s) -- protects soft consonant tails
-    "word_guard": 0.06,         # if word timestamps given, never cut within this of a word (s)
+    "min_cut_gap": 0.35,        # (audio-only fallback) only remove silent gaps at least this long (s)
+    "pre_pad": 0.12,            # (audio-only fallback) lead-in kept before speech resumes (s)
+    "post_pad": 0.18,           # (audio-only fallback) tail kept after speech (s)
+    "word_guard": 0.06,         # (audio-only fallback) never cut within this of a word (s)
+    # Word-region + edge-trim mode (used whenever word timestamps are supplied):
+    # keep each word region, merge ones close together, then trim the silent
+    # head/tail of every region down to where audio actually starts/ends. Tight
+    # AND never clips. This is the primary path for finals/batch.
+    "word_pre": 0.04,           # pad before a word when forming its region (s)
+    "word_post": 0.06,          # pad after a word (s)
+    "merge_gap": 0.16,          # merge word regions whose gap is under this (keeps phrases intact) (s)
+    "trim_drop_db": 20.0,       # edge-trim threshold = speech_level - this; trims silent region edges
+    "edge_lead": 0.05,          # silence kept before the first audible sample of a region (s)
+    "edge_tail": 0.10,          # silence kept after the last audible sample (protects tails) (s)
 }
 
 
@@ -213,50 +223,46 @@ def detect_segments(analysis, words, profile=None):
     if duration <= 0 or len(db) == 0:
         return [{"start": 0.0, "end": max(0.0, duration)}], [], empty_meta
 
-    # Silence threshold on dBFS: a fixed margin below the file's speech level,
-    # clamped to an absolute window. Anything below it (for >= min_cut_gap) is a
-    # gap to remove; speech (well above the line) is always kept.
     finite = db[np.isfinite(db) & (db > -120)]
     speech_level = float(np.percentile(finite, p["speech_pct"])) if len(finite) else -20.0
-    threshold = speech_level - p["silence_drop_db"]
-    threshold = max(p["silence_thr_min"], min(p["silence_thr_max"], threshold))
     floor = float(np.percentile(finite, 15)) if len(finite) else -70.0
-    silent = _mask_to_intervals(db < threshold, hop, duration)
 
-    cuts = []
-    for g in silent:
-        if (g["end"] - g["start"]) < p["min_cut_gap"]:
-            continue  # short pause -> keep for natural pacing
-        cs = g["start"] + p["post_pad"]   # keep a tail after the preceding sound
-        ce = g["end"] - p["pre_pad"]       # keep a lead-in before the next sound
-        if ce - cs >= 0.10:                # something genuinely silent left to remove
-            cuts.append({"start": cs, "end": ce})
+    valid_words = [w for w in words if w.get("end", 0) > w.get("start", 0)]
+    if valid_words:
+        # PRIMARY: word regions, merged, then silent head/tail trimmed to audible.
+        threshold = speech_level - p["trim_drop_db"]
+        regions = _merge_keep(
+            [{"start": max(0.0, w["start"] - p["word_pre"]), "end": w["end"] + p["word_post"]}
+             for w in valid_words], p["merge_gap"], duration)
+        trim_thr = speech_level - p["trim_drop_db"]
+        keep = []
+        for k in regions:
+            ia = int(k["start"] / hop)
+            ib = min(len(db), max(ia + 1, int(k["end"] / hop)))
+            seg = db[ia:ib]
+            aud = np.flatnonzero(seg > trim_thr)
+            if len(aud) == 0:
+                keep.append({"start": k["start"], "end": min(k["end"], k["start"] + 0.2)})
+                continue
+            a = max(k["start"], (ia + int(aud[0])) * hop - p["edge_lead"])
+            b = min(k["end"], (ia + int(aud[-1])) * hop + p["edge_tail"])
+            keep.append({"start": a, "end": b})
+        keep = _merge_keep(keep, min(p["merge_gap"], 0.12), duration)
+        cuts = _complement(keep, duration)
+    else:
+        # FALLBACK (no transcript): plain dBFS silence detection, conservative.
+        threshold = max(p["silence_thr_min"], min(p["silence_thr_max"], speech_level - p["silence_drop_db"]))
+        silent = _mask_to_intervals(db < threshold, hop, duration)
+        cuts = []
+        for g in silent:
+            if (g["end"] - g["start"]) < p["min_cut_gap"]:
+                continue
+            cs = g["start"] + p["post_pad"]
+            ce = g["end"] - p["pre_pad"]
+            if ce - cs >= 0.10:
+                cuts.append({"start": cs, "end": ce})
+        keep = _complement(cuts, duration)
 
-    # Word guard: if we have word timestamps, never let a cut overlap a word
-    # (belt-and-suspenders against the threshold catching a quiet word edge).
-    if words and p.get("word_guard", 0) > 0:
-        wg = p["word_guard"]
-        spans = [{"start": w["start"] - wg, "end": w["end"] + wg}
-                 for w in words if w.get("end", 0) > w.get("start", 0)]
-        if spans:
-            guarded = []
-            for c in cuts:
-                pieces = [(c["start"], c["end"])]
-                for s in spans:
-                    nxt = []
-                    for a, b in pieces:
-                        if s["end"] <= a or s["start"] >= b:
-                            nxt.append((a, b))
-                        else:
-                            if s["start"] > a:
-                                nxt.append((a, s["start"]))
-                            if s["end"] < b:
-                                nxt.append((s["end"], b))
-                    pieces = nxt
-                guarded.extend({"start": a, "end": b} for a, b in pieces if b - a >= 0.12)
-            cuts = guarded
-
-    keep = _complement(cuts, duration)
     fallback = False
     if not keep:
         keep = [{"start": 0.0, "end": duration}]
