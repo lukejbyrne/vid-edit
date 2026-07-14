@@ -6,12 +6,27 @@ Uses a file lock so concurrent launchd triggers don't double-process.
 """
 
 import fcntl
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from remove_silence_cli import detect_silences, keep_segments, trim_concat
+
+
+def _probe_dur(path):
+    fp = shutil.which("ffprobe")
+    if not fp:
+        return 0.0
+    r = subprocess.run(
+        [fp, "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nk=1:nw=1", path], capture_output=True, text=True)
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return 0.0
 
 HOME = Path.home()
 RAW = HOME / "Downloads" / "video-raw"
@@ -48,6 +63,12 @@ def process_file(src):
     result = trim_concat(str(src), str(tmp), segs)
     if result.returncode != 0:
         print(f"  ffmpeg failed: {result.stderr[-400:]}", flush=True)
+        tmp.unlink(missing_ok=True)
+        return
+    expected = sum(s["end"] - s["start"] for s in segs)
+    got = _probe_dur(str(tmp))
+    if expected - got > max(3.0, 0.1 * expected):
+        print(f"  truncated output ({got:.1f}s vs expected ~{expected:.1f}s); discarding", flush=True)
         tmp.unlink(missing_ok=True)
         return
     tmp.rename(out)

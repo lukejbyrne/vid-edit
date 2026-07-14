@@ -130,6 +130,18 @@ def main(files):
             print("  no speech segments found; skipping", flush=True)
             continue
         process(path, outpath, segments)
+        try:
+            out_dur = get_duration(outpath)
+        except Exception:
+            out_dur = 0.0
+        if kept - out_dur > max(3.0, 0.1 * kept):
+            print(f"  ERROR: output truncated ({out_dur:.1f}s vs expected ~{kept:.1f}s); "
+                  f"removing {os.path.basename(outpath)}", flush=True)
+            try:
+                os.remove(outpath)
+            except OSError:
+                pass
+            continue
         print(f"  wrote {os.path.basename(outpath)} "
               f"({os.path.getsize(outpath) / 1e6:.0f} MB)", flush=True)
     print("\nALL DONE", flush=True)
