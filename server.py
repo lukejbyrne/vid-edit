@@ -32,6 +32,31 @@ METADATA_PATH = os.path.join(UPLOAD_DIR, "metadata.json")
 STATIC_FFMPEG_DIR = Path(os.environ.get("VID_EDIT_STATIC_FFMPEG_DIR", "/tmp/vid-edit-static-ffmpeg"))
 _VIDEO_TOOLS = None
 
+MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".m4v", ".webm", ".avi"}
+
+
+def safe_media_path(raw, must_exist=False):
+    """Resolve a client-supplied media path. Returns (Path, None) or (None, error).
+
+    This server has no authentication, so an unguarded path lets any POST name any
+    file on disk: /api/render would overwrite it, and /api/load + /api/video would
+    read it back out. Requiring a real media suffix blocks dotfiles, keys and
+    configs while leaving every genuine workflow (including external drives) alone.
+    """
+    if not raw:
+        return None, "No path given"
+    try:
+        p = Path(str(raw)).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None, "Bad path"
+    if not p.is_absolute():
+        return None, "Path must be absolute"
+    if p.suffix.lower() not in MEDIA_SUFFIXES:
+        return None, f"Not a media file: {p.suffix or '(no extension)'}"
+    if must_exist and not p.is_file():
+        return None, f"File not found: {p}"
+    return p, None
+
 _progress_lock = threading.Lock()
 _progress = {"active": False, "percent": 0, "stage": "idle", "error": None}
 DEFAULT_SPEECH_AWARE = True
@@ -464,7 +489,31 @@ def volume_keep_segments(silences, total_duration, padding=DEFAULT_PADDING):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    def _content_length(self):
+        """Content-Length, defensively. A missing/garbage header used to raise
+        KeyError/ValueError before the handler's try block and die as a bare 500."""
+        try:
+            return max(0, int(self.headers.get("Content-Length") or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _origin_ok(self):
+        """Reject cross-site POSTs. A browser sends Origin on cross-origin requests,
+        so a random web page cannot drive this unauthenticated local server. Requests
+        with no Origin (curl, the CLI tools) are local clients and are allowed."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        try:
+            host = urlparse(origin).hostname
+        except ValueError:
+            return False
+        return host in ("localhost", "127.0.0.1", "::1")
+
     def do_POST(self):
+        if not self._origin_ok():
+            self.send_json({"ok": False, "error": "Cross-origin POST refused"}, 403)
+            return
         path = urlparse(self.path).path
         routes = {
             "/api/upload": self.handle_upload,
@@ -483,10 +532,21 @@ class Handler(SimpleHTTPRequestHandler):
             "/api/render": self.handle_render,
         }
         handler = routes.get(path)
-        if handler:
-            handler()
-        else:
+        if not handler:
             self.send_error(404)
+            return
+        # Error boundary: a malformed body used to raise JSONDecodeError straight out
+        # of the handler, killing the request with no response at all (the client just
+        # saw the connection drop). Always answer with JSON the UI can show.
+        self._responded = False
+        try:
+            handler()
+        except json.JSONDecodeError:
+            if not self._responded:
+                self.send_json({"ok": False, "error": "Malformed JSON body"}, 400)
+        except Exception as exc:
+            if not self._responded:
+                self.send_json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -553,9 +613,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_load(self):
         body = self._read_json()
-        src = Path(str(body.get("path", ""))).expanduser()
-        if not src.is_file():
-            self.send_json({"ok": False, "error": f"File not found: {src}"}, 400)
+        src, err = safe_media_path(body.get("path", ""), must_exist=True)
+        if err:
+            self.send_json({"ok": False, "error": err}, 400)
             return
         target = os.path.join(UPLOAD_DIR, "input.mp4")
         try:
@@ -684,11 +744,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "No segments to keep"}, 400)
             return
 
-        out = body.get("output")
-        if not out:
-            self.send_json({"ok": False, "error": "No output path"}, 400)
+        out_path, err = safe_media_path(body.get("output"))
+        if err:
+            self.send_json({"ok": False, "error": f"Bad output path: {err}"}, 400)
             return
-        out_path = Path(out).expanduser()
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         if _get_progress()["active"]:
@@ -732,7 +791,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- Upload ----
     def handle_upload(self):
-        content_length = int(self.headers["Content-Length"])
+        content_length = self._content_length()
         filepath = os.path.join(UPLOAD_DIR, "input.mp4")
 
         chunk_size = 1024 * 1024
@@ -762,7 +821,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- Silence Detection ----
     def handle_detect(self):
-        content_length = int(self.headers["Content-Length"])
+        content_length = self._content_length()
         params = json.loads(self.rfile.read(content_length))
 
         threshold = params.get("threshold", -35)
@@ -872,7 +931,7 @@ class Handler(SimpleHTTPRequestHandler):
             _set_progress(active=False, stage="idle")
 
     def handle_process(self):
-        content_length = int(self.headers["Content-Length"])
+        content_length = self._content_length()
         params = json.loads(self.rfile.read(content_length))
         segments = params.get("segments", [])
 
@@ -895,7 +954,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_export(self):
         """Export from transcript editor — same trim+concat, different output name."""
-        content_length = int(self.headers["Content-Length"])
+        content_length = self._content_length()
         params = json.loads(self.rfile.read(content_length))
         segments = params.get("segments", [])
 
@@ -1090,7 +1149,7 @@ class Handler(SimpleHTTPRequestHandler):
         return result
 
     def handle_render_captions(self):
-        content_length = int(self.headers["Content-Length"])
+        content_length = self._content_length()
         params = json.loads(self.rfile.read(content_length))
 
         filepath = os.path.join(UPLOAD_DIR, "input.mp4")
@@ -1198,7 +1257,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- Duplicate Take Detection ----
     def handle_find_duplicates(self):
-        content_length = int(self.headers["Content-Length"])
+        content_length = self._content_length()
         params = json.loads(self.rfile.read(content_length))
         segments = params.get("segments", [])
 
@@ -1326,6 +1385,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- Helpers ----
     def send_json(self, data, status=200):
+        self._responded = True   # so do_POST's error boundary won't double-respond
         body = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -1342,5 +1402,7 @@ if __name__ == "__main__":
     print(f"Vid-Edit running at http://localhost:{port}")
     print(f"Review UI:  http://localhost:{port}/review.html")
     print(f"Temp dir: {UPLOAD_DIR}")
-    server = ThreadingHTTPServer(("", port), Handler)
+    # Localhost only: this server is unauthenticated, so it must not be reachable
+    # from the LAN.
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.serve_forever()
