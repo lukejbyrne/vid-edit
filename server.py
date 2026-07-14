@@ -212,10 +212,18 @@ def normalize_segments(segments, total_duration):
         if end - start < 0.02:
             continue
 
-        if normalized and start <= normalized[-1]["end"] + 0.001:
-            normalized[-1]["end"] = max(normalized[-1]["end"], end)
-        else:
-            normalized.append({"start": start, "end": end})
+        # Absorb a genuine CHRONOLOGICAL touch/overlap/containment into the previous
+        # segment. But a segment that starts BEFORE the previous one started is not an
+        # overlap — it is a clip the user dragged out of chronological order, and the
+        # export must render it in the order given. The old test (`start <= prev.end`)
+        # swallowed those, so a drag-to-front intro silently vanished from the render.
+        if normalized:
+            prev = normalized[-1]
+            if prev["start"] <= start <= prev["end"] + 0.001:
+                prev["end"] = max(prev["end"], end)
+                continue
+
+        normalized.append({"start": start, "end": end})
 
     return normalized
 
