@@ -32,10 +32,16 @@ def process_file(path, channel, high=False):
         print(f"  skip (exists): {path.name}", flush=True)
         return
     dur = server.get_duration(str(path))
-    # Cuts are pure silence detection now (no transcription needed) -> fast + safe.
+    # Transcribe so silence removal uses the word-region path (tight, never clips
+    # word tails). Falls back to audio-only if transcription fails.
+    try:
+        words = server.transcribe_words_local(str(path))
+    except Exception as e:
+        words = []
+        print(f"  ! transcription failed ({e}); audio-only fallback", flush=True)
     analysis = speech_detect.analyze_audio(str(path), ffmpeg=ffmpeg)
     profile = calibration.load_profile(channel)
-    keep, cuts, meta = speech_detect.detect_segments(analysis, [], profile)
+    keep, cuts, meta = speech_detect.detect_segments(analysis, words, profile)
     kept = sum(s["end"] - s["start"] for s in keep)
     print(f"  {path.name}: {dur:.0f}s -> {kept:.0f}s kept ({len(cuts)} silent gaps removed)"
           + ("  [no clear silence -> kept whole]" if meta.get("fallbackKeptAll") else ""), flush=True)

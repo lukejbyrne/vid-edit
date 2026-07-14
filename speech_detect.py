@@ -24,28 +24,32 @@ SR = 16000  # analysis sample rate (mono)
 # Default per-channel tuning profile. The review UI learns adjustments to these
 # from the user's corrections (see calibration.py).
 DEFAULT_PROFILE = {
-    "floor_pct": 20.0,        # percentile of speech-band dB treated as the silence floor
-    "speech_margin_db": 10.0,  # speech must sit this many dB above the floor
-    "abs_floor_db": -60.0,     # never treat anything below this as speech, whatever the floor
-    "min_ratio": 0.30,         # a voiced frame needs >= this share of energy in the speech band
-    "require_words": True,     # keep a voiced region only if Whisper put words in it (kills music/noise)
-    "keep_ratio": 0.62,        # if require_words is False: keep wordless regions this speech-like (rescues missed words)
-    "bridge_gap": 0.30,        # merge voiced blips separated by less than this (s)
-    "min_voiced": 0.15,        # discard voiced islands shorter than this (s)
-    "pre_pad": 0.15,           # lead-in kept before a speech region (s)
-    "post_pad": 0.25,          # tail kept after a speech region (s) -- generous so word tails survive
-    "min_cut_gap": 0.50,       # never cut a gap shorter than this; keeps natural pacing (s)
-    # A cut edge may only land where the BROADBAND waveform is this close to its
-    # noise floor (i.e. genuinely silent). Keep boundaries grow outward over any
-    # louder audio first (up to edge_grow), so a cut never clips a word's
-    # onset/tail/breath even if Whisper's timestamp started late.
-    "audible_margin_db": 6.0,
-    "edge_grow": 0.6,          # max seconds a keep edge may grow outward chasing audible audio
-    "max_word_gap": 0.80,      # word-grouping gap (s), informational
-    "hallucination_phrases": [  # whole word-groups matching these (and gated out by energy) are flagged
-        "thank you", "thanks for watching", "thank you for watching",
-        "please subscribe", "see you next time", "bye", "you",
-    ],
+    # Silence threshold is set on TRUE dBFS: a frame is "silent" if its level is
+    # `silence_drop_db` below the file's speech level (85th pct), clamped to an
+    # absolute window. This adapts to each recording's loudness yet stays a safe
+    # margin under speech so words are never cut. Cuts land only in silence by
+    # construction, so we can be tight without clipping.
+    "silence_drop_db": 24.0,    # cut line = speech_level - this many dB (deep silence only)
+    "silence_thr_min": -54.0,   # never put the cut line below this dBFS
+    "silence_thr_max": -40.0,   # never put the cut line above this dBFS (protects quiet word edges)
+    "speech_pct": 85.0,         # percentile of dBFS taken as the representative speech level
+    "min_cut_gap": 0.35,        # (audio-only fallback) only remove silent gaps at least this long (s)
+    "pre_pad": 0.12,            # (audio-only fallback) lead-in kept before speech resumes (s)
+    "post_pad": 0.18,           # (audio-only fallback) tail kept after speech (s)
+    "word_guard": 0.06,         # (audio-only fallback) never cut within this of a word (s)
+    # Word-region + edge-trim mode (used whenever word timestamps are supplied):
+    # keep each word region, merge ones close together, then trim the silent
+    # head/tail of every region down to where audio actually starts/ends. Tight
+    # AND never clips. This is the primary path for finals/batch.
+    "word_pre": 0.06,           # pad before a word when forming its region (s)
+    "word_post": 0.20,          # pad after a word (s) -- tails are NEVER audio-trimmed, only this fixed pad
+    "merge_gap": 0.18,          # merge word regions whose gap is under this (keeps phrases intact) (s)
+    "trim_drop_db": 30.0,       # HEAD-trim threshold = speech_level - this (trims silent lead-in only)
+    "edge_lead": 0.08,          # silence kept before the first audible sample of a region (s)
+    "final_beat": 0.35,         # trailing room kept after the very last word of the clip (s)
+    "internal_drop_db": 27.0,   # cut deep-silent stretches inside regions below speech - this (true silence only)
+    "internal_gap": 0.18,       # only cut internal silence longer than this (s)
+    "internal_pad": 0.10,       # cushion left on each side of an internal cut (s)
 }
 
 
@@ -102,11 +106,17 @@ def analyze_audio(filepath, ffmpeg="ffmpeg", hop=0.02, win=0.032, n_peaks=2400):
     full_db = np.empty(n_frames, dtype=np.float32)
     speech_db = np.empty(n_frames, dtype=np.float32)
     ratio = np.empty(n_frames, dtype=np.float32)
+    rms_dbfs = np.empty(n_frames, dtype=np.float32)  # TRUE dBFS level (drives silence)
 
     chunk = 2048  # frames per FFT batch -> bounds peak memory
     for s in range(0, n_frames, chunk):
         e = min(s + chunk, n_frames)
-        block = frames[s:e] * window
+        raw = frames[s:e]
+        # Calibrated RMS level in dBFS (0 = full scale). This is what the silence
+        # decision uses — comparable across recordings, unlike the FFT-power scale.
+        rms = np.sqrt((raw.astype(np.float64) ** 2).mean(axis=1)) + eps
+        rms_dbfs[s:e] = 20.0 * np.log10(rms)
+        block = raw * window
         spec = np.abs(np.fft.rfft(block, axis=1)) ** 2
         total = spec.sum(axis=1)
         sp = spec[:, speech_band].sum(axis=1)
@@ -128,7 +138,7 @@ def analyze_audio(filepath, ffmpeg="ffmpeg", hop=0.02, win=0.032, n_peaks=2400):
     return {
         "duration": duration, "hop": hop, "sr": SR,
         "full_db": full_db, "speech_db": speech_db, "ratio": ratio,
-        "peaks": peaks,
+        "rms_dbfs": rms_dbfs, "peaks": peaks,
     }
 
 
@@ -205,32 +215,87 @@ def detect_segments(analysis, words, profile=None):
     p = merged_profile(profile)
     hop = analysis["hop"]
     duration = analysis["duration"]
-    full_db = np.asarray(analysis["full_db"], dtype=np.float32)
+    # Use calibrated dBFS; fall back to the old FFT scale only if absent.
+    db = np.asarray(analysis.get("rms_dbfs", analysis["full_db"]), dtype=np.float32)
     words = words or []
 
     empty_meta = {"threshold_db": None, "floor_db": None, "cutCount": 0,
                   "hallucinations": [], "hallucinationCount": 0,
                   "keptDuration": round(max(0.0, duration), 2),
                   "removedDuration": 0.0, "fallbackKeptAll": True}
-    if duration <= 0 or len(full_db) == 0:
+    if duration <= 0 or len(db) == 0:
         return [{"start": 0.0, "end": max(0.0, duration)}], [], empty_meta
 
-    # "Silent" = broadband loudness within audible_margin_db of the file's own
-    # noise floor. Everything above that is sound and is always kept.
-    floor = float(np.percentile(full_db, p["floor_pct"]))
-    ceiling = floor + p["audible_margin_db"]
-    silent = _mask_to_intervals(full_db < ceiling, hop, duration)
+    finite = db[np.isfinite(db) & (db > -120)]
+    speech_level = float(np.percentile(finite, p["speech_pct"])) if len(finite) else -20.0
+    floor = float(np.percentile(finite, 15)) if len(finite) else -70.0
 
-    cuts = []
-    for g in silent:
-        if (g["end"] - g["start"]) < p["min_cut_gap"]:
-            continue  # short pause -> keep for natural pacing
-        cs = g["start"] + p["post_pad"]   # keep a tail after the preceding sound
-        ce = g["end"] - p["pre_pad"]       # keep a lead-in before the next sound
-        if ce - cs >= 0.10:                # something genuinely silent left to remove
-            cuts.append({"start": cs, "end": ce})
+    valid_words = [w for w in words if w.get("end", 0) > w.get("start", 0)]
+    if valid_words:
+        # PRIMARY: keep each word's region (merged), trim ONLY the silent lead-in
+        # (head). Tails are never audio-trimmed — quiet trailing consonants (s, r,
+        # f) read as silence, so trimming them clips words; we keep a fixed
+        # word_post pad instead. The very last word also keeps a natural beat.
+        threshold = speech_level - p["trim_drop_db"]
+        regions = _merge_keep(
+            [{"start": max(0.0, w["start"] - p["word_pre"]), "end": w["end"] + p["word_post"]}
+             for w in valid_words], p["merge_gap"], duration)
+        keep = []
+        for k in regions:
+            ia = int(k["start"] / hop)
+            ib = min(len(db), max(ia + 1, int(k["end"] / hop)))
+            aud = np.flatnonzero(db[ia:ib] > threshold)
+            a = k["start"] if len(aud) == 0 else max(k["start"], (ia + int(aud[0])) * hop - p["edge_lead"])
+            keep.append({"start": a, "end": k["end"]})  # tail untouched
+        keep = _merge_keep(keep, 0.12, duration)
+        if keep:
+            above = np.flatnonzero(db > threshold)
+            last_audible = (int(above[-1]) * hop) if len(above) else duration
+            keep[-1]["end"] = min(duration, max(keep[-1]["end"], last_audible + p["final_beat"]))
+        # Remove DEEP-silent stretches that fall INSIDE kept regions (whisper
+        # inflates some word spans across demo pauses, dragging silence in). The
+        # deep threshold means only true silence is cut, never consonants.
+        int_thr = speech_level - p["internal_drop_db"]
+        ipad = p["internal_pad"]
+        internal_cuts = []
+        for g in _mask_to_intervals(db < int_thr, hop, duration):
+            if g["end"] - g["start"] <= p["internal_gap"]:
+                continue
+            cs, ce = g["start"] + ipad, g["end"] - ipad
+            if ce - cs >= 0.08:
+                internal_cuts.append({"start": cs, "end": ce})
+        if internal_cuts:
+            kept_intervals = []
+            for k in keep:
+                pieces = [(k["start"], k["end"])]
+                for c in internal_cuts:
+                    nxt = []
+                    for a, b in pieces:
+                        if c["end"] <= a or c["start"] >= b:
+                            nxt.append((a, b))
+                        else:
+                            if c["start"] > a:
+                                nxt.append((a, c["start"]))
+                            if c["end"] < b:
+                                nxt.append((c["end"], b))
+                    pieces = nxt
+                kept_intervals.extend({"start": a, "end": b} for a, b in pieces if b - a > 0.05)
+            keep = _merge_keep(kept_intervals, 0.10, duration)
+        cuts = _complement(keep, duration)
+    else:
+        # FALLBACK (no transcript): plain dBFS silence detection, conservative.
+        threshold = max(p["silence_thr_min"], min(p["silence_thr_max"], speech_level - p["silence_drop_db"]))
+        silent = _mask_to_intervals(db < threshold, hop, duration)
+        cuts = []
+        for g in silent:
+            if (g["end"] - g["start"]) < p["min_cut_gap"]:
+                continue
+            cs = g["start"] + p["post_pad"]
+            ce = g["end"] - p["pre_pad"]
+            if ce - cs >= 0.10:
+                cuts.append({"start": cs, "end": ce})
+        keep = _complement(cuts, duration)
 
-    keep = _complement(cuts, duration)
     fallback = False
     if not keep:
         keep = [{"start": 0.0, "end": duration}]
@@ -246,8 +311,9 @@ def detect_segments(analysis, words, profile=None):
 
     kept_dur = sum(s["end"] - s["start"] for s in keep)
     meta = {
-        "threshold_db": round(ceiling, 1),
+        "threshold_db": round(threshold, 1),
         "floor_db": round(floor, 1),
+        "speech_db": round(speech_level, 1),
         "cutCount": len(cuts),
         "hallucinations": ghosts[:50],
         "hallucinationCount": len(ghosts),
