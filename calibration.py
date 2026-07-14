@@ -24,10 +24,14 @@ CALIB_DIR = Path(__file__).parent / "calibration"
 _LOCK = threading.Lock()
 
 # Tunable params the learner is allowed to touch, with hard clamps.
+# NB: these keys must exist in speech_detect.DEFAULT_PROFILE — the detector's
+# threshold knob is `silence_drop_db` (cut line = speech level MINUS this many dB),
+# so BIGGER = cut line further below speech = cut LESS. The old `audible_margin_db`
+# knob no longer exists; tuning it crashed the learner with a KeyError.
 CLAMPS = {
     "pre_pad": (0.0, 0.6),
     "post_pad": (0.0, 0.8),
-    "audible_margin_db": (2.0, 14.0),
+    "silence_drop_db": (16.0, 34.0),
     "min_cut_gap": (0.2, 2.0),
 }
 DAMPING = 0.5  # apply half of the observed correction, so we converge instead of oscillate
@@ -202,17 +206,24 @@ def _learn_locked(channel, proposed, corrected, duration, note):
     # clobber each other. A restored cut means I removed real audio -> raise the
     # bar for "silent" so I cut less; a deleted keep means I left dead air -> lower
     # the bar so I cut more.
-    margin_delta = -1.0 * min(false_cuts, 3) + 0.7 * min(false_keeps, 3)
-    if abs(margin_delta) >= 0.05:
-        new_m = _clamp("audible_margin_db", eff["audible_margin_db"] + margin_delta)
-        if abs(new_m - eff["audible_margin_db"]) >= 0.1:
-            ov["audible_margin_db"] = round(new_m, 2)
-            direction = "cut less" if margin_delta < 0 else "cut more"
+    # `silence_drop_db` is a DROP BELOW the speech level, so the sign is inverted vs
+    # the old margin knob: BIGGER drop = cut line further under speech = cut LESS.
+    # Damped so repeated saves converge instead of oscillating.
+    drop_delta = DAMPING * (1.0 * min(false_cuts, 3) - 0.7 * min(false_keeps, 3))
+    if abs(drop_delta) >= 0.05:
+        new_d = _clamp("silence_drop_db", eff["silence_drop_db"] + drop_delta)
+        if abs(new_d - eff["silence_drop_db"]) >= 0.1:
+            ov["silence_drop_db"] = round(new_d, 2)
+            direction = "cut less" if drop_delta > 0 else "cut more"
             changes.append(
-                f"{direction}: silence threshold {eff['audible_margin_db']:.1f}->{new_m:.1f}dB "
-                f"({false_cuts} restored, {false_keeps} deleted)")
-    if false_cuts:
-        new_g = _clamp("min_cut_gap", eff["min_cut_gap"] + 0.05 * min(false_cuts, 3))
+                f"{direction}: silence line {eff['silence_drop_db']:.1f}->{new_d:.1f}dB "
+                f"below speech ({false_cuts} restored, {false_keeps} deleted)")
+
+    # min_cut_gap must move BOTH ways. It used to only ever increase, so it ratcheted
+    # to the 2.0s clamp and silence removal quietly stopped happening for that channel.
+    gap_delta = 0.05 * min(false_cuts, 3) - 0.05 * min(false_keeps, 3)
+    if abs(gap_delta) >= 0.001:
+        new_g = _clamp("min_cut_gap", eff["min_cut_gap"] + gap_delta)
         if abs(new_g - eff["min_cut_gap"]) >= 0.01:
             ov["min_cut_gap"] = round(new_g, 3)
             changes.append(f"min_cut_gap ->{new_g:.2f}s")
